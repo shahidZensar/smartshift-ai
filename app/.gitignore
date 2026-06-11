@@ -1,0 +1,11 @@
+.env
+.env.azure
+.env.llamacpp
+.env.llamacpp-remote
+.env.localai
+.env.olla
+.env.ollama
+.env.openai
+
+__pycache__/**/*
+./chains/__pycache__/*

@@ -1,0 +1,30 @@
+.app-container {
+  display: flex;
+  height: 100vh;
+  width: 100%;
+  background-color: var(--background-color);
+  overflow: hidden;
+}
+
+.chat-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  background-color: var(--surface-color);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.chat-container.sidebar-closed {
+  padding-top: 70px;
+}
+
+@media (max-width: 768px) {
+  .app-container {
+    flex-direction: column;
+  }
+
+  .chat-container {
+    width: 100%;
+  }
+}

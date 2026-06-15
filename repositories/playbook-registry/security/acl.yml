@@ -1,0 +1,30 @@
+---
+# CONFIG intent: ACL   | category: security
+# required_fields: acl_name, action, source, destination
+# optional: protocol (default ip), port, state (present/absent)
+# action: permit or deny. source/destination accept 'any', a host IP, or A.B.C.D wildcard.
+# e.g. -e "acl_name=BLOCK_GUEST action=deny source=10.20.0.0 destination=any protocol=ip"
+
+- name: Configure extended ACL
+  hosts: "{{ target_hosts | default('routers') }}"
+  gather_facts: false
+  connection: network_cli
+
+  tasks:
+    - name: "Ensure ACL {{ acl_name }} ({{ action }}) is {{ state | default('present') }}"
+      cisco.ios.ios_acls:
+        config:
+          - afi: ipv4
+            acls:
+              - name: "{{ acl_name }}"
+                acl_type: extended
+                aces:
+                  - grant: "{{ action }}"
+                    protocol: "{{ protocol | default('ip') }}"
+                    source:
+                      address: "{{ source if source != 'any' else omit }}"
+                      any: "{{ true if source == 'any' else omit }}"
+                    destination:
+                      address: "{{ destination if destination != 'any' else omit }}"
+                      any: "{{ true if destination == 'any' else omit }}"
+        state: "{{ 'merged' if (state | default('present')) == 'present' else 'deleted' }}"

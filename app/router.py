@@ -3,10 +3,11 @@ import json
 from .decision import llm
 from .prompts import INTENT_CLASSIFIER_PROMPT, ROUTER_PROMPT
 
-VALID_INTENTS = ("HYBRID", "SQL", "RAG", "SEARCH")
+# CONFIG is checked first so an explicit config-change request wins.
+VALID_INTENTS = ("CONFIG", "HYBRID", "SQL", "RAG", "SEARCH")
 
-def classify_intent(query):
-    prompt = INTENT_CLASSIFIER_PROMPT.format(query=query)
+def classify_intent(query, history=""):
+    prompt = INTENT_CLASSIFIER_PROMPT.format(query=query, history=history or "(none)")
     response = llm.invoke(prompt)
     raw = response.content if hasattr(response, 'content') else response
     text = str(raw).strip().upper()
@@ -20,4 +21,3 @@ def classify_intent(query):
 
     # Safe default: fall back to external web SEARCH when intent is unclear.
     return "SEARCH"
-

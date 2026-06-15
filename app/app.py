@@ -1,4 +1,5 @@
 import json
+import uuid
 import uvicorn
 import torch
 
@@ -24,9 +25,12 @@ from .admin import admin_router
 from .util import final_prompt
 from .chains.sql_chain import sql_chain
 from .chains.response_chain import final_chain_async, final_chain, final_structured_chain
-from .chains.web_search import web_search_chain
+from .chains.web_search import web_search, web_search_chain
 from .chains.rag_chain import rag_chain
 from .router import classify_intent
+from .services.conversation_store import conversation_store
+from .services.config_service import config_service
+from .models import ConfigStage
 
 torch.set_default_tensor_type(torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor)
 
@@ -194,19 +198,45 @@ async def askv1_question(request: QueryRequest):
                 detail="Question cannot be empty"
             )
         logger.info(f"Received question: {request.question}")
-        tool = classify_intent(request.question)
+
+        # --- session + chaining (req #1) ---
+        session_id = request.session_id or str(uuid.uuid4())
+        history_str = conversation_store.format_recent(session_id)
+
+        # Resume an in-progress CONFIG conversation without re-classifying.
+        active_cfg = conversation_store.get_config_state(session_id)
+        config_in_progress = active_cfg is not None and active_cfg.stage != ConfigStage.DONE
+
+        if config_in_progress:
+            tool = "CONFIG"
+        else:
+            tool = classify_intent(request.question, history_str)
         logger.info(f"Classified intent: {tool}")
-      
+
+        # --- CONFIG intent: stateful refinement loop (see CONFIG_INTENT_PLAN.md) ---
+        if tool.strip() == "CONFIG":
+            config_payload = config_service.handle(request.question, session_id)
+            conversation_store.append_turn(session_id, "user", request.question)
+            conversation_store.append_turn(session_id, "assistant", config_payload.get("answer", ""))
+            content = {
+                "session_id": session_id,
+                "timestamp": datetime.utcnow().isoformat(),
+                "sources": [],
+                "follow_up_questions": [],
+            }
+            content.update(config_payload)
+            return JSONResponse(status_code=200, content=content)
+
         if tool.strip() == "SQL":
-            sql_context = await sql_chain(request)
+            sql_context = await sql_chain(request, history_str)
             logger.info(f"Processing question: {request.question}")
             logger.info("SQL context length:%r", sql_context)
             response = final_structured_chain(sql_context, request)
         elif tool.strip() == "RAG":
             logger.info(f"Processing question with RAG: {request.question}")
-            response = rag_chain(request.question)
+            response = rag_chain(request.question, history_str)
         elif tool.strip() == "HYBRID":
-            sql_context = await sql_chain(request)
+            sql_context = await sql_chain(request, history_str)
             logger.info(f"Processing question: {request.question}")
             try:
                 rag_context = vectorstore_manager.retrieve_docs(request.question)
@@ -215,17 +245,21 @@ async def askv1_question(request: QueryRequest):
             logger.info("Preparing final prompt and invoking llm")  # Log first 100 chars of SQL context
             logger.info("SQL context length:%r", sql_context)
             #response = final_chain_async(sql_context, rag_context, request)
-            response = final_chain(sql_context, rag_context, request)
+            response = final_chain(sql_context, rag_context, request, history_str)
         elif tool.strip() == "SEARCH" :
              logger.info(f"Processing question with web search: {request.question}")
-             response = web_search_chain(request.question)
+             response = web_search_chain(request.question, history_str)
              #response = "Web search results go here"
+        answer_text = "".join(response) if isinstance(response, list) else str(response)
+        conversation_store.append_turn(session_id, "user", request.question)
+        conversation_store.append_turn(session_id, "assistant", answer_text)
         logger.info(f"Generated response successfully:%r", response)
         return JSONResponse(
             status_code=200,
             content={
-                "answer": "".join(response) if isinstance(response, list) else str(response),
-                "session_id": request.session_id,
+                "answer": answer_text,
+                "session_id": session_id,
+                "intent": tool.strip(),
                 "timestamp": datetime.utcnow().isoformat(),
                 "sources": [],
                 "follow_up_questions": []
@@ -298,6 +332,12 @@ async def startup_event():
     logger.info("Device Chat API started")
     logger.info("RAG model and embeddings loaded successfully")
     vectorstore_manager.load_vectorstore(RAG_INDEX_PATH)
+    # CONFIG intent: ensure the config_inventory table exists + has dummy data.
+    try:
+        from .config_inventory import ensure_schema_and_seed
+        ensure_schema_and_seed()
+    except Exception as exc:
+        logger.warning("config_inventory seed skipped (%s); picker will use fallback", exc)
 
 @app.on_event("shutdown")
 async def shutdown_event():

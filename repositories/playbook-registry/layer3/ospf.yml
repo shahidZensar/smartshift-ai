@@ -1,0 +1,23 @@
+---
+# CONFIG intent: OSPF   | category: layer3
+# required_fields: process_id, network, wildcard_mask, area_id
+# optional: router_id, state (present/absent)
+# e.g. -e "process_id=1 network=10.1.1.0 wildcard_mask=0.0.0.255 area_id=0"
+
+- name: Configure OSPF
+  hosts: "{{ target_hosts | default('routers') }}"
+  gather_facts: false
+  connection: network_cli
+
+  tasks:
+    - name: "Ensure OSPF process {{ process_id }} is {{ state | default('present') }}"
+      cisco.ios.ios_ospfv2:
+        config:
+          processes:
+            - process_id: "{{ process_id }}"
+              router_id: "{{ router_id | default(omit) }}"
+              network:
+                - address: "{{ network }}"
+                  wildcard_bits: "{{ wildcard_mask }}"
+                  area: "{{ area_id }}"
+        state: "{{ 'merged' if (state | default('present')) == 'present' else 'deleted' }}"

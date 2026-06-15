@@ -40,7 +40,14 @@ RAG_TOP_K = 5
 RAG_INDEX_PATH = "data/rag_index"
 MEMORY_BASE_PATH = "data/session_memory"
 
-MYSQL_URI = "mysql+pymysql://root:7030594657%40Nashik@127.0.0.1:3306/inventory"
+MYSQL_URI = "mysql+pymysql://root:root@127.0.0.1:3306/inventory"
+
+# ---------- CONFIG intent ----------
+# Mandatory approval gate before any delivery/execution (CONFIG_INTENT_PLAN.md §7).
+CONFIG_REQUIRE_APPROVAL = os.getenv("CONFIG_REQUIRE_APPROVAL", "true").strip().lower() in {"1", "true", "yes"}
+# Polish follow-up questions (COLLECT_FIELDS / DISAMBIGUATE) through the LLM so they
+# read naturally. Falls back to the deterministic wording on any failure. §6, decision C.
+CONFIG_LLM_PHRASING = os.getenv("CONFIG_LLM_PHRASING", "true").strip().lower() in {"1", "true", "yes"}
 
 CONVERSTIONAL_MEMORY_PROMPT = """
 You are an enterprise network device migration assistant.

@@ -1,0 +1,16 @@
+---
+# CONFIG intent: HOSTNAME   | category: management
+# required_fields: hostname
+# e.g. -e "hostname=CORE-SW-01"
+
+- name: Configure hostname
+  hosts: "{{ target_hosts | default('all') }}"
+  gather_facts: false
+  connection: network_cli
+
+  tasks:
+    - name: "Set hostname to {{ hostname }}"
+      cisco.ios.ios_hostname:
+        config:
+          hostname: "{{ hostname }}"
+        state: merged

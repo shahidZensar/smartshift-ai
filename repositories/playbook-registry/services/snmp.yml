@@ -1,0 +1,24 @@
+---
+# CONFIG intent: SNMP   | category: services
+# required_fields: community, host
+# optional: access (ro/rw, default ro), version (default 2c), state
+# e.g. -e "community=public host=10.0.0.50 access=ro"
+
+- name: Configure SNMP
+  hosts: "{{ target_hosts | default('all') }}"
+  gather_facts: false
+  connection: network_cli
+
+  tasks:
+    - name: "Ensure SNMP community/host is {{ state | default('present') }}"
+      cisco.ios.ios_snmp_server:
+        config:
+          communities:
+            - name: "{{ community }}"
+              ro: "{{ (access | default('ro')) == 'ro' }}"
+              rw: "{{ (access | default('ro')) == 'rw' }}"
+          hosts:
+            - host: "{{ host }}"
+              community_string: "{{ community }}"
+              version: "{{ version | default('2c') }}"
+        state: "{{ 'merged' if (state | default('present')) == 'present' else 'deleted' }}"

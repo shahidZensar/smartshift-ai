@@ -1,0 +1,33 @@
+---
+# CONFIG intent: SSH_ACCESS   | category: management
+# required_fields: domain_name
+# optional: key_size (default 2048)
+# e.g. -e "domain_name=smartshift.local key_size=2048"
+#
+# NOTE: SSH enablement has no dedicated resource module, so this uses
+# ios_config (command templates). The crypto-key step is NOT idempotent -
+# re-running regenerates the key. In the agent, flag SSH_ACCESS as a
+# higher-risk intent (confirm / dry-run with --check before execution).
+
+- name: Configure SSH secure management
+  hosts: "{{ target_hosts | default('all') }}"
+  gather_facts: false
+  connection: network_cli
+
+  tasks:
+    - name: "Set IP domain name"
+      cisco.ios.ios_config:
+        lines:
+          - "ip domain name {{ domain_name }}"
+
+    - name: "Generate RSA key (modulus avoids interactive prompt)"
+      cisco.ios.ios_config:
+        lines:
+          - "crypto key generate rsa modulus {{ key_size | default(2048) }}"
+
+    - name: "Enable SSHv2 and restrict VTY lines to SSH"
+      cisco.ios.ios_config:
+        lines:
+          - "ip ssh version 2"
+          - "transport input ssh"
+        parents: "line vty 0 4"

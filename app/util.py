@@ -9,6 +9,21 @@ def clean_sql(sql: str) -> str:
     # remove ```sql and ``` markers
     return re.sub(r"```sql|```", "", sql, flags=re.IGNORECASE).strip()
 
+def with_history(prompt_text: str, history: str = "") -> str:
+    """Prepend a rolling conversation transcript so follow-ups resolve against
+    context (req #1 chaining, §5.1). Applied AFTER the template is formatted, so it
+    never interferes with prompt placeholders. No-op when there is no history."""
+    if not history:
+        return prompt_text
+    return (
+        "PRIOR CONVERSATION (oldest first; use it to resolve follow-up references "
+        "like 'that one', 'those', 'the second device', 'what about Pune' — ignore "
+        "if not relevant to the request below):\n"
+        f"{history}\n\n"
+        "----- CURRENT REQUEST -----\n"
+        f"{prompt_text}"
+    )
+
 def safe_text(text: str) -> str:
     # Basic sanitization to prevent injection or formatting issues
     return text.replace("{", "{{").replace("}", "}}").replace("%", "%%")

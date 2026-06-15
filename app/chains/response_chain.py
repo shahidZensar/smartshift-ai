@@ -3,7 +3,7 @@ import json
 
 from .. import logger
 from .. decision import openai_llm
-from ..util import final_prompt
+from ..util import final_prompt, with_history
 from ..prompts import HYBRID_PROMPT, STRUCTURED_PROMPT
 
 # Function to chunk JSON into smaller batches
@@ -30,13 +30,16 @@ def process_full_payload(data, rag_context={},request=None, batch_size=2):
         all_summaries.extend(batch_result)
     return all_summaries
 
-def final_chain(sql_context, rag_context, request):
+def final_chain(sql_context, rag_context, request, history: str = ""):
     final_response = ""
     logger.info("Starting final chain processing with SQL context and RAG context")
     logger.info("Current date: %r", datetime.utcnow().strftime("%Y-%m-%d"))
-    formatted_prompt = final_prompt.format(sql_context=sql_context, 
-                                        rag_context=rag_context, question=request.question, 
-                                        current_date=datetime.utcnow().strftime("%Y-%m-%d"))
+    formatted_prompt = with_history(
+        final_prompt.format(sql_context=sql_context,
+                            rag_context=rag_context, question=request.question,
+                            current_date=datetime.utcnow().strftime("%Y-%m-%d")),
+        history,
+    )
     #logger.info("Formatted prompt for final response generation: %r", formatted_prompt)
     try:
         response = openai_llm.invoke(formatted_prompt)

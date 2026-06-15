@@ -1,0 +1,28 @@
+---
+# CONFIG intent: INTERFACE_L3 (Configure Interface IP)   | category: layer3
+# required_fields: interface_name, ip_address, subnet_mask
+# optional: description, admin_state (up/down)
+# NOTE: subnet_mask is the PREFIX LENGTH for this demo (e.g. 24).
+# e.g. -e "interface_name=GigabitEthernet0/1 ip_address=10.1.1.1 subnet_mask=24"
+
+- name: Configure interface IP
+  hosts: "{{ target_hosts | default('routers') }}"
+  gather_facts: false
+  connection: network_cli
+
+  tasks:
+    - name: "Set description and admin state on {{ interface_name }}"
+      cisco.ios.ios_interfaces:
+        config:
+          - name: "{{ interface_name }}"
+            description: "{{ description | default('') }}"
+            enabled: "{{ (admin_state | default('up')) == 'up' }}"
+        state: merged
+
+    - name: "Assign IP {{ ip_address }}/{{ subnet_mask }} to {{ interface_name }}"
+      cisco.ios.ios_l3_interfaces:
+        config:
+          - name: "{{ interface_name }}"
+            ipv4:
+              - address: "{{ ip_address }}/{{ subnet_mask }}"
+        state: merged

@@ -15,6 +15,7 @@ function App() {
     }
   ])
   const [isLoading, setIsLoading] = useState(false)
+  const [sessionId, setSessionId] = useState(null)
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [isAdminOpen, setIsAdminOpen] = useState(false)
   const [error, setError] = useState(null)
@@ -53,7 +54,7 @@ function App() {
       // Prepare form data for file upload
       const formData = new FormData()
       formData.append('question', text)
-      formData.append('session_id', null)
+      formData.append('session_id', sessionId || '')
       formData.append('include_context', true)
       
       // Add files to form data
@@ -78,7 +79,7 @@ function App() {
         },
         body: JSON.stringify({
           question: text,
-          session_id: null,
+          session_id: sessionId,
           include_context: true,
           history: history
         })
@@ -89,7 +90,13 @@ function App() {
       }
 
       const data = await response.json()
-      
+
+      // Persist the session id the backend returns so multi-turn flows
+      // (e.g. the CONFIG refinement loop) chain across turns.
+      if (data.session_id) {
+        setSessionId(data.session_id)
+      }
+
       const botMessage = {
         id: Date.now() + 1,
         text: data.response || data.message || data.answer || "I couldn't process that request. Please try again.",
@@ -125,6 +132,7 @@ function App() {
         timestamp: new Date()
       }
     ])
+    setSessionId(null)
     setError(null)
   }
 

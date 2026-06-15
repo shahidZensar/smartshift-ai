@@ -1,0 +1,19 @@
+---
+# CONFIG intent: USER_ACCOUNT   | category: management
+# required_fields: username, user_password
+# optional: privilege (default 15), state (present/absent)
+# NOTE: in production user_password is injected from vault, never typed by a user.
+# e.g. -e "username=netadmin user_password=Demo@123 privilege=15"
+
+- name: Configure local user account
+  hosts: "{{ target_hosts | default('all') }}"
+  gather_facts: false
+  connection: network_cli
+
+  tasks:
+    - name: "Ensure user {{ username }} is {{ state | default('present') }}"
+      cisco.ios.ios_user:
+        name: "{{ username }}"
+        configured_password: "{{ user_password }}"
+        privilege: "{{ privilege | default(15) }}"
+        state: "{{ state | default('present') }}"

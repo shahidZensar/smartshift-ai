@@ -1,0 +1,23 @@
+---
+# CONFIG intent: VRRP (Virtual Router Redundancy Protocol)   | category: redundancy (Tier 2)
+# required_fields: interface_name, group_id, virtual_ip
+# optional: priority (default 100), state (present/absent)
+# VRRP is the vendor-neutral equivalent of HSRP. No idempotent resource module
+# exists, so this is ios_config based -> risk: high (confirm / --check first).
+# NOTE: uses classic 'vrrp <grp> ip' syntax. Newer IOS-XE may require the
+#       vrrpv3 / address-family form instead - validate against your image.
+# e.g. -e "interface_name=Vlan10 group_id=1 virtual_ip=10.1.1.1 priority=110"
+
+- name: Configure VRRP
+  hosts: "{{ target_hosts | default('routers') }}"
+  gather_facts: false
+  connection: network_cli
+
+  tasks:
+    - name: "Configure VRRP group {{ group_id }} on {{ interface_name }}"
+      cisco.ios.ios_config:
+        parents: "interface {{ interface_name }}"
+        lines:
+          - "vrrp {{ group_id }} ip {{ virtual_ip }}"
+          - "vrrp {{ group_id }} priority {{ priority | default(100) }}"
+          - "vrrp {{ group_id }} preempt"

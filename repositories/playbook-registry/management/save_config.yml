@@ -1,0 +1,16 @@
+---
+# CONFIG intent: SAVE_CONFIG   | category: management
+# required_fields: (none)
+# Writes running-config to startup-config. Useful as a final step after a
+# migration batch, or as a standalone "save" intent.
+# e.g. -e "target_hosts=switches"
+
+- name: Save configuration
+  hosts: "{{ target_hosts | default('all') }}"
+  gather_facts: false
+  connection: network_cli
+
+  tasks:
+    - name: "Write running-config to startup-config"
+      cisco.ios.ios_config:
+        save_when: always

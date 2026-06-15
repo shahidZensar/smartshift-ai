@@ -7,21 +7,24 @@ from langchain_community.utilities import SQLDatabase
 from ..models import QueryRequest
 from ..config import CONVERSTIONAL_MEMORY_PROMPT, MYSQL_URI, RAG_INDEX_PATH
 from .. import logger
-from ..util import clean_sql, final_prompt, json_serializer, safe_text, sql_prompt, table_info, format_sql_response
+from ..util import clean_sql, final_prompt, json_serializer, safe_text, sql_prompt, table_info, format_sql_response, with_history
 from ..decision import openai_llm
 
-async def sql_chain(request: QueryRequest) -> str:
+async def sql_chain(request: QueryRequest, history: str = "") -> str:
         engine = create_engine(MYSQL_URI)
         db = SQLDatabase(engine)
         sql_context:str = "No SQL context available."
         df = {}
         current_date = pd.Timestamp.now().normalize().strftime("%Y-%m-%d")
         sql_response = await openai_llm.ainvoke(
-            sql_prompt.format(
-                input=safe_text(request.question),
-                table_info=table_info,
-                top_k=3,
-                current_date=current_date
+            with_history(
+                sql_prompt.format(
+                    input=safe_text(request.question),
+                    table_info=table_info,
+                    top_k=3,
+                    current_date=current_date
+                ),
+                history,
             )
         )
         #logger.info(f"SQL response from LLM: %r", sql_response)

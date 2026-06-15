@@ -1,0 +1,171 @@
+# Metadata-driven mapping for the CONFIG intent (19 playbooks).
+# The refinement loop asks follow-up questions ONLY for required_fields
+# that are missing from user input, then maps the refined intent to the
+# playbook below. No YAML is generated at runtime.
+#
+# Playbooks are organised into category subdirectories under the registry
+# (management/, layer2/, layer3/, security/, services/, redundancy/, segmentation/).
+# The `playbook:` path is relative to the registry and is authoritative for file
+# location; `category` is the matching domain classification label.
+#
+# risk: "low"  = resource-module backed, idempotent, clean rollback via state=absent
+# risk: "high" = ios_config based (command templates) - confirm / --check first
+
+# ---------- Management & Access ----------
+hostname:
+  playbook: playbooks/management/hostname.yml
+  category: management
+  target_group: all
+  required_fields: [hostname]
+  optional_fields: []
+  risk: low
+
+ssh_access:
+  playbook: playbooks/management/ssh_access.yml
+  category: management
+  target_group: all
+  required_fields: [domain_name]
+  optional_fields: [key_size]
+  risk: high
+
+user_account:
+  playbook: playbooks/management/user_account.yml
+  category: management
+  target_group: all
+  required_fields: [username, user_password]
+  optional_fields: [privilege, state]
+  risk: low
+
+banner:
+  playbook: playbooks/management/banner.yml
+  category: management
+  target_group: all
+  required_fields: [banner_text]
+  optional_fields: [banner_type, state]
+  risk: low
+
+save_config:
+  playbook: playbooks/management/save_config.yml
+  category: management
+  target_group: all
+  required_fields: []
+  optional_fields: []
+  risk: low
+
+# ---------- Layer 2 ----------
+vlan:
+  playbook: playbooks/layer2/vlan.yml
+  category: layer2
+  target_group: switches
+  required_fields: [vlan_id, vlan_name]
+  optional_fields: [state]
+  risk: low
+
+interface_l2:
+  playbook: playbooks/layer2/interface.yml
+  category: layer2
+  target_group: switches
+  required_fields: [interface_name, mode, access_vlan]
+  optional_fields: [description, admin_state]
+  risk: low
+
+port_channel:
+  playbook: playbooks/layer2/port_channel.yml
+  category: layer2
+  target_group: switches
+  required_fields: [channel_group_id, member_interfaces, mode]
+  optional_fields: [state]
+  risk: low
+
+# ---------- Layer 3 / Routing ----------
+interface_l3:
+  playbook: playbooks/layer3/interface_ip.yml
+  category: layer3
+  target_group: routers
+  required_fields: [interface_name, ip_address, subnet_mask]
+  optional_fields: [description, admin_state]
+  risk: low
+
+static_route:
+  playbook: playbooks/layer3/static_route.yml
+  category: layer3
+  target_group: routers
+  required_fields: [destination_network, subnet_mask, next_hop]
+  optional_fields: [admin_distance, state]
+  risk: low
+
+ospf:
+  playbook: playbooks/layer3/ospf.yml
+  category: layer3
+  target_group: routers
+  required_fields: [process_id, network, wildcard_mask, area_id]
+  optional_fields: [router_id, state]
+  risk: low
+
+# ---------- Security ----------
+acl:
+  playbook: playbooks/security/acl.yml
+  category: security
+  target_group: routers
+  required_fields: [acl_name, action, source, destination]
+  optional_fields: [protocol, port, state]
+  risk: low
+
+aaa:
+  playbook: playbooks/security/aaa.yml
+  category: security
+  target_group: all
+  required_fields: [server_ip, shared_key, auth_type]
+  optional_fields: [server_name, state]
+  risk: high
+
+# ---------- Operations / Services ----------
+ntp:
+  playbook: playbooks/services/ntp.yml
+  category: services
+  target_group: all
+  required_fields: [ntp_server]
+  optional_fields: [state]
+  risk: low
+
+snmp:
+  playbook: playbooks/services/snmp.yml
+  category: services
+  target_group: all
+  required_fields: [community, host]
+  optional_fields: [access, version, state]
+  risk: low
+
+syslog:
+  playbook: playbooks/services/syslog.yml
+  category: services
+  target_group: all
+  required_fields: [syslog_server]
+  optional_fields: [severity_level, state]
+  risk: low
+
+# ---------- Redundancy / First-Hop Redundancy ----------
+hsrp:
+  playbook: playbooks/redundancy/hsrp.yml
+  category: redundancy
+  target_group: routers
+  required_fields: [interface_name, group_id, virtual_ip]
+  optional_fields: [priority, preempt, state]
+  risk: low
+
+vrrp:
+  playbook: playbooks/redundancy/vrrp.yml
+  category: redundancy
+  target_group: routers
+  required_fields: [interface_name, group_id, virtual_ip]
+  optional_fields: [priority, state]
+  risk: high
+
+# ---------- Segmentation ----------
+vrf:
+  playbook: playbooks/segmentation/vrf.yml
+  category: segmentation
+  target_group: routers
+  required_fields: [vrf_name, rd]
+  optional_fields: [interfaces, description, state]
+  risk: low

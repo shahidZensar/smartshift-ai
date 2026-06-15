@@ -7,6 +7,7 @@ from urllib3.exceptions import InsecureRequestWarning
 from .. import logger
 from ..prompts import WEBESEARCH_PROMPT
 from ..decision import llm
+from ..util import with_history
 
 def web_search(query):
     # Replace with internal search proxy or SerpAPI
@@ -26,8 +27,8 @@ def web_search(query):
         logger.error("Web search failed, returning empty results: %s", exc)
         return []
 
-def web_search_chain(query):
+def web_search_chain(query, history: str = ""):
     search_results = web_search(query)
-    prompt = WEBESEARCH_PROMPT.format(query=query, search_results=search_results)
+    prompt = with_history(WEBESEARCH_PROMPT.format(query=query, search_results=search_results), history)
     llm_response = llm.invoke(prompt)
     return llm_response.content if hasattr(llm_response, 'content') else llm_response

@@ -1,0 +1,40 @@
+---
+# CONFIG intent: AAA (TACACS+ / RADIUS)   | category: security/management (Tier 2)
+# required_fields: server_ip, shared_key, auth_type (tacacs+ | radius)
+# optional: server_name (default AAA-SRV), state
+# ios_config based -> risk: high. AAA misconfig can LOCK YOU OUT of the device,
+# so the login method always ends in 'local' as a fallback if the server is
+# unreachable. In production shared_key comes from vault, never typed by a user.
+# e.g. -e "server_ip=10.0.0.30 shared_key=Secret123 auth_type=tacacs+"
+
+- name: Configure AAA
+  hosts: "{{ target_hosts | default('all') }}"
+  gather_facts: false
+  connection: network_cli
+
+  tasks:
+    - name: "Enable AAA"
+      cisco.ios.ios_config:
+        lines:
+          - "aaa new-model"
+
+    - name: "Define TACACS+ server {{ server_name | default('AAA-SRV') }}"
+      cisco.ios.ios_config:
+        parents: "tacacs server {{ server_name | default('AAA-SRV') }}"
+        lines:
+          - "address ipv4 {{ server_ip }}"
+          - "key {{ shared_key }}"
+      when: auth_type == 'tacacs+'
+
+    - name: "Define RADIUS server {{ server_name | default('AAA-SRV') }}"
+      cisco.ios.ios_config:
+        parents: "radius server {{ server_name | default('AAA-SRV') }}"
+        lines:
+          - "address ipv4 {{ server_ip }} auth-port 1812 acct-port 1813"
+          - "key {{ shared_key }}"
+      when: auth_type == 'radius'
+
+    - name: "Apply login authentication ({{ auth_type }} then local fallback)"
+      cisco.ios.ios_config:
+        lines:
+          - "aaa authentication login default group {{ auth_type }} local"

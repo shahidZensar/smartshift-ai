@@ -1,0 +1,18 @@
+---
+# CONFIG intent: NTP   | category: services
+# required_fields: ntp_server
+# optional: state (present/absent)
+# e.g. -e "ntp_server=10.0.0.200"
+
+- name: Configure NTP
+  hosts: "{{ target_hosts | default('all') }}"
+  gather_facts: false
+  connection: network_cli
+
+  tasks:
+    - name: "Ensure NTP server {{ ntp_server }} is {{ state | default('present') }}"
+      cisco.ios.ios_ntp_global:
+        config:
+          servers:
+            - server: "{{ ntp_server }}"
+        state: "{{ 'merged' if (state | default('present')) == 'present' else 'deleted' }}"

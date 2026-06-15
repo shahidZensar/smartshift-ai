@@ -1,0 +1,24 @@
+---
+# CONFIG intent: PORT_CHANNEL (LAG / EtherChannel)   | category: layer2
+# required_fields: channel_group_id, member_interfaces (list), mode
+# optional: state (present/absent)
+# mode: active/passive (LACP) or on (static)
+# e.g. -e '{"channel_group_id":10,"member_interfaces":["GigabitEthernet0/1","GigabitEthernet0/2"],"mode":"active"}'
+
+- name: Configure port-channel
+  hosts: "{{ target_hosts | default('switches') }}"
+  gather_facts: false
+  connection: network_cli
+
+  tasks:
+    - name: "Build member list for Port-channel{{ channel_group_id }}"
+      ansible.builtin.set_fact:
+        lag_members: "{{ lag_members | default([]) + [{'member': item, 'mode': mode | default('active')}] }}"
+      loop: "{{ member_interfaces }}"
+
+    - name: "Ensure Port-channel{{ channel_group_id }} is {{ state | default('present') }}"
+      cisco.ios.ios_lag_interfaces:
+        config:
+          - name: "Port-channel{{ channel_group_id }}"
+            members: "{{ lag_members }}"
+        state: "{{ 'merged' if (state | default('present')) == 'present' else 'deleted' }}"

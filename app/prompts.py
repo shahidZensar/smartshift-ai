@@ -303,6 +303,7 @@ Answer the user's QUESTION using ONLY the information in CONTEXT.
 - If the context does not contain the answer, clearly state that the information is not available.
 - Do not fabricate device models, dates, licensing terms, or specifications.
 - Keep the answer clear, concise, and grounded in the provided context.
+- If the response contains tables, then provide results in table format with markdown table syntax.
 
 CONTEXT:
 {rag_context}

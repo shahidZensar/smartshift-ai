@@ -26,6 +26,7 @@ from ..config import CONFIG_LLM_PHRASING, CONFIG_LLM_PREFLIGHT, CONFIG_USE_FORMS
 from .. import config_inventory
 from ..chains.config_chain import (
     detect_type, extract_fields, extract_connection, phrase_question, preflight_validate, build_form,
+    GATE_ROUTES,
 )
 from .conversation_store import conversation_store
 
@@ -565,7 +566,32 @@ class ConfigService:
                     state.candidates = []
 
             if not state.config_type:
-                ctype, candidates = self._detect(message, history)
+                route, ctype, candidates = self._detect(message, history)
+
+                # ---- semantic intent gate (runs only here, inside CONFIG, before type mapping) ----
+                if route == "DEVICE_REFERENCE":
+                    # A device/entity was named but no actionable change -> offer the
+                    # actions we actually support (never force it into a config type).
+                    actions = config_registry.types()
+                    state.stage = ConfigStage.DISAMBIGUATE
+                    state.candidates = actions
+                    conversation_store.set_config_state(session_id, state)
+                    return _resp(self._device_reference_message(), state, "user_input",
+                                 extra={"route": "DEVICE_REFERENCE", "options": actions})
+                if route == "UNKNOWN":
+                    # Too vague to act on. Don't trap the session in CONFIG: clear it so the
+                    # next turn is re-classified normally; just ask one clarifying question.
+                    conversation_store.clear_config_state(session_id)
+                    state.stage = ConfigStage.DONE
+                    return _resp(self._unknown_message(), state, "user_input",
+                                 extra={"route": "UNKNOWN"})
+                if route == "NOT_CONFIG":
+                    # The top-level router mis-fired CONFIG. Hand control back to it.
+                    conversation_store.clear_config_state(session_id)
+                    logger.info("CONFIG gate: NOT_CONFIG for %r -> returning control to router", message)
+                    return {"route": "NOT_CONFIG"}
+
+                # route == CONFIG_ACTION -> unchanged type-mapping behaviour.
                 if ctype:
                     state.config_type = ctype
                     state.candidates = []
@@ -694,38 +720,52 @@ class ConfigService:
         return result
 
     # ----- helpers -----
-    def _detect(self, message: str, history: str) -> tuple[Optional[str], list[str]]:
-        """Resolve the config_type.
+    def _detect(self, message: str, history: str) -> tuple[str, Optional[str], list[str]]:
+        """Semantic gate + config_type resolution, before any config-type mapping.
 
-        Returns (resolved_type, candidates):
-          - (type, [])   when resolved deterministically or confidently.
-          - (None, [..]) when ambiguous — the list is the candidates to offer.
+        Returns (route, resolved_type, candidates):
+          - route is one of GATE_ROUTES. Only CONFIG_ACTION proceeds into the config flow;
+            DEVICE_REFERENCE / UNKNOWN / NOT_CONFIG short-circuit upstream.
+          - resolved_type/candidates are meaningful only for CONFIG_ACTION (same semantics
+            as before: a type, or a candidate list to disambiguate).
+
+        Efficiency: a single keyword hit is unambiguously a config ACTION and resolves with
+        NO LLM call. Otherwise the EXISTING detect_type call also carries the gate route —
+        no extra LLM round-trip is added.
         """
         hits = config_registry.match_keywords(message)
 
-        # 1) exactly one keyword hit -> deterministic, no LLM cost.
+        # 1) exactly one keyword hit -> a clear config action, resolved deterministically.
         if len(hits) == 1:
             logger.info("CONFIG type resolved by keyword: %r", hits[0])
-            return hits[0], []
+            return "CONFIG_ACTION", hits[0], []
 
         detection = detect_type(message, history)
+        route = detection.route if detection.route in GATE_ROUTES else "CONFIG_ACTION"
 
-        # 2) keyword collision -> trust a confident LLM pick among them, else disambiguate the hits.
+        # 2) keyword collision -> config keywords ARE present, so it is a config action;
+        #    resolve among the colliding types (trust a confident LLM pick, else disambiguate).
         if len(hits) > 1:
             if detection.config_type in hits and detection.confidence >= DETECT_CONFIDENCE_HIGH:
                 logger.info("CONFIG keyword collision %s resolved by LLM: %r (conf=%.2f)",
                             hits, detection.config_type, detection.confidence)
-                return detection.config_type, []
+                return "CONFIG_ACTION", detection.config_type, []
             logger.info("CONFIG keyword collision %s -> disambiguate", hits)
-            return None, hits[:MAX_DISAMBIG_CANDIDATES]
+            return "CONFIG_ACTION", None, hits[:MAX_DISAMBIG_CANDIDATES]
 
-        # 3) no keyword hit -> rely on the LLM.
+        # 3) no keyword hit -> the gate route governs. A non-action route stops here
+        #    WITHOUT classifying a config type (that stays in the CONFIG pipeline).
+        if route != "CONFIG_ACTION":
+            logger.info("CONFIG gate route=%s (conf=%.2f) for %r", route, detection.confidence, message)
+            return route, None, []
+
+        # 3a) CONFIG_ACTION with no keyword -> resolve by confidence, else disambiguate.
         if detection.config_type and detection.confidence >= DETECT_CONFIDENCE_LOW:
             logger.info("CONFIG type resolved by LLM: %r (conf=%.2f)",
                         detection.config_type, detection.confidence)
-            return detection.config_type, []
+            return "CONFIG_ACTION", detection.config_type, []
 
-        # 4) unresolved -> build candidate list from the LLM's suggestions.
+        # 4) unresolved action -> build candidate list from the LLM's suggestions.
         candidates: list[str] = []
         if detection.config_type and config_registry.get(detection.config_type):
             candidates.append(detection.config_type)
@@ -736,7 +776,7 @@ class ConfigService:
             candidates = config_registry.types()[:3]
         logger.info("CONFIG type unresolved (conf=%.2f) -> disambiguate %s",
                     detection.confidence, candidates[:MAX_DISAMBIG_CANDIDATES])
-        return None, candidates[:MAX_DISAMBIG_CANDIDATES]
+        return "CONFIG_ACTION", None, candidates[:MAX_DISAMBIG_CANDIDATES]
 
     def _resolve_choice(self, message: str, candidates: list[str]) -> Optional[str]:
         """Match a disambiguation reply to one of the offered candidates."""
@@ -763,6 +803,24 @@ class ConfigService:
             if spec and any(kw in m for kw in spec.keywords):
                 return c
         return None
+
+    def _device_reference_message(self) -> str:
+        """Gate response for DEVICE_REFERENCE: a device/entity was named but no action."""
+        examples = config_registry.examples(3)
+        eg = "; ".join(examples) if examples else 'set the hostname to CORE-SW-01'
+        return "\n".join([
+            "It looks like you named a device but didn't say what to change on it.",
+            "I can make configuration changes such as a hostname, VLAN, interface, IP "
+            "address, OSPF, ACL, NTP/SNMP/syslog, SSH access, or a local user.",
+            "",
+            f"Tell me what to change (e.g. {eg}), or rephrase your request.",
+        ])
+
+    def _unknown_message(self) -> str:
+        """Gate response for UNKNOWN: one clarifying question."""
+        return ("I didn't quite catch what you'd like to do. Are you trying to make a "
+                "configuration change on a device (for example, set a hostname, create a "
+                "VLAN, or configure an interface)? If so, tell me what to change.")
 
     def _disambiguation_message(self, candidates: list[str]) -> str:
         lines = ["I can tell you want a network configuration change, but I'm not sure which one. Did you mean:"]

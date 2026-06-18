@@ -26,6 +26,9 @@ from ..prompts import (
     CONFIG_FORM_BUILD_PROMPT,
 )
 
+# Closed set of semantic-gate verdicts the detection call may return (see config_service).
+GATE_ROUTES = ("CONFIG_ACTION", "DEVICE_REFERENCE", "UNKNOWN", "NOT_CONFIG")
+
 _detect_parser = PydanticOutputParser(pydantic_object=ConfigTypeDetection)
 _extract_parser = PydanticOutputParser(pydantic_object=ConfigFieldExtraction)
 _conn_parser = PydanticOutputParser(pydantic_object=ConfigConnectionExtraction)
@@ -53,6 +56,11 @@ def detect_type(query: str, history: str = "") -> ConfigTypeDetection:
     try:
         output = llm.invoke(prompt)
         result = _detect_parser.parse(_llm_text(output))
+        # Normalise the semantic-gate route to the closed set. Default to CONFIG_ACTION so
+        # a garbled/missing route never blocks an otherwise-valid config request (the gate
+        # only ADDS branching for non-action inputs; it never weakens existing behaviour).
+        route = (result.route or "").strip().upper()
+        result.route = route if route in GATE_ROUTES else "CONFIG_ACTION"
         # Guard: reject hallucinated types not in the registry.
         if result.config_type and result.config_type not in types:
             logger.warning("detect_type returned unknown type %r; discarding", result.config_type)
@@ -62,7 +70,9 @@ def detect_type(query: str, history: str = "") -> ConfigTypeDetection:
         return result
     except Exception as exc:
         logger.error("config detect_type failed: %s", exc)
-        return ConfigTypeDetection(config_type=None, confidence=0.0, candidates=[])
+        # Fail-safe: proceed as before (CONFIG_ACTION) so an LLM/parse error degrades to
+        # the existing disambiguation flow rather than swallowing a real config request.
+        return ConfigTypeDetection(route="CONFIG_ACTION", config_type=None, confidence=0.0, candidates=[])
 
 
 def extract_fields(

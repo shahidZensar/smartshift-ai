@@ -58,3 +58,5 @@ ui/build/
 # ===== OS =====
 .DS_Store
 Thumbs.db
+
+SmartShift_CONFIG_Change_Table.md

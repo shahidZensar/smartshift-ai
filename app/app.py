@@ -218,16 +218,24 @@ async def askv1_question(request: QueryRequest):
             config_payload = config_service.handle(
                 request.question, session_id, form_values=getattr(request, "form_values", None)
             )
-            conversation_store.append_turn(session_id, "user", request.question)
-            conversation_store.append_turn(session_id, "assistant", config_payload.get("answer", ""))
-            content = {
-                "session_id": session_id,
-                "timestamp": datetime.utcnow().isoformat(),
-                "sources": [],
-                "follow_up_questions": [],
-            }
-            content.update(config_payload)
-            return JSONResponse(status_code=200, content=content)
+            if config_payload.get("route") == "NOT_CONFIG":
+                # Semantic gate decided this isn't a configuration action after all.
+                # Hand control back to the normal router (CONFIG excluded so it can't
+                # bounce straight back) and fall through to the existing intent handling.
+                # SQL / RAG / SEARCH / HYBRID paths below are completely unaffected.
+                tool = classify_intent(request.question, history_str, allow_config=False)
+                logger.info("CONFIG gate returned NOT_CONFIG; re-routed to %r", tool)
+            else:
+                conversation_store.append_turn(session_id, "user", request.question)
+                conversation_store.append_turn(session_id, "assistant", config_payload.get("answer", ""))
+                content = {
+                    "session_id": session_id,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "sources": [],
+                    "follow_up_questions": [],
+                }
+                content.update(config_payload)
+                return JSONResponse(status_code=200, content=content)
 
         if tool.strip() == "SQL":
             sql_context = await sql_chain(request, history_str)

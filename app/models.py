@@ -114,8 +114,14 @@ class ConfigState(BaseModel):
 
 
 class ConfigTypeDetection(BaseModel):
-    """LLM fallback output for config-type detection (§8)."""
-    config_type: Optional[str] = Field(None, description="Best-match config_type, or null if unsure")
+    """LLM output for the CONFIG semantic gate + type detection.
+
+    `route` is the semantic intent gate verdict (consumed in config_service): it decides
+    whether a real configuration ACTION exists BEFORE any config-type mapping. It is
+    returned by the SAME existing detect_type call (no extra LLM round-trip). The other
+    fields are only meaningful when route == 'CONFIG_ACTION'."""
+    route: str = Field("CONFIG_ACTION", description="CONFIG_ACTION | DEVICE_REFERENCE | UNKNOWN | NOT_CONFIG")
+    config_type: Optional[str] = Field(None, description="Best-match config_type (only for CONFIG_ACTION), else null")
     confidence: float = Field(0.0, description="0.0-1.0 confidence in the match")
     candidates: List[str] = Field(default_factory=list, description="Other plausible config_types")
 

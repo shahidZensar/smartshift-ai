@@ -93,23 +93,44 @@ Return ONLY one word: CONFIG, SQL, RAG, HYBRID, or SEARCH.
 # ==================== CONFIG intent prompts ====================
 
 CONFIG_TYPE_DETECT_PROMPT = """
-You classify a network configuration request into ONE config_type.
+You are the pre-check gate for a network CONFIGURATION assistant. The top-level router
+already guessed this request is config-related; your job is to decide whether there is a
+real, actionable CONFIGURATION CHANGE before any config flow begins — and, only if so,
+which config_type it maps to.
 
-Allowed config_type values (choose from this list ONLY):
+The ONLY configuration actions this system supports (closed set — never invent others):
 {config_types}
 
-For reference, here is one example request per type:
+One example request per supported action:
 {type_examples}
+
+STEP 1 — choose a route (return EXACTLY one of these strings):
+- CONFIG_ACTION    : the user gives an actionable change to apply (set / create / add /
+                     enable / configure / remove a SPECIFIC setting) that maps to one of
+                     the supported actions above.
+                     e.g. "create VLAN 30 named FINANCE", "set hostname to CORE-SW-01".
+- DEVICE_REFERENCE : the user names a device, model, product code, or entity but states
+                     NO concrete change to make — EVEN IF the word "configure" appears.
+                     e.g. "configure C9800-L-F-K9", "C9800-L-F-K9", "the core router".
+- NOT_CONFIG       : the request is not about changing device configuration at all
+                     (a data lookup, a question, a definition, small talk).
+- UNKNOWN          : too vague or garbled to tell.
+
+STEP 2 — fill the type fields:
+- Only when route == CONFIG_ACTION, set config_type to the best match from the list
+  above (or null if unsure), a confidence (0.0-1.0), and any other plausible candidates.
+- For DEVICE_REFERENCE / NOT_CONFIG / UNKNOWN, set config_type to null and confidence 0.0.
+
+Rules:
+- A bare device / model / product code with NO specific setting to change is
+  DEVICE_REFERENCE, NOT a config action. Do NOT force it into a config_type.
+- Never return a config_type that is not in the supported list above.
 
 Recent conversation (for context; may be empty):
 {history}
 
 User request:
 {query}
-
-Return the best matching config_type with your confidence (0.0-1.0) and any other
-plausible candidates. If the request is too vague to map to a single type, set
-config_type to null, give a low confidence, and list the plausible candidates.
 
 {format_instructions}
 """

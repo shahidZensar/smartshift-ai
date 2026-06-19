@@ -1,4 +1,5 @@
-import os 
+import os
+from urllib.parse import quote_plus
 from . import logger
 from dotenv import load_dotenv
 
@@ -13,6 +14,15 @@ env_path = os.path.join(BASE_DIR, env_file)
 
 logger.info("Configuration loaded for environment: %r", env)
 logger.info("Loading configuration from %r", env_path)
+
+# Load a base .env first (shared, provider-independent secrets such as the database
+# credentials and SerpAPI key live here once). The provider-specific .env.<env> file
+# is loaded afterwards and overrides any overlapping keys. Both files are gitignored,
+# so secrets stay local and are never pushed or overwritten on pull.
+base_env_path = os.path.join(BASE_DIR, ".env")
+if os.path.exists(base_env_path):
+    logger.info("Base environment file found: %r", base_env_path)
+    load_dotenv(base_env_path, override=False)
 
 if os.path.exists(env_path):
     logger.info("Environment file found: %r", env_path)
@@ -40,7 +50,7 @@ RAG_TOP_K = 5
 RAG_INDEX_PATH = "data/rag_index"
 MEMORY_BASE_PATH = "data/session_memory"
 
-MYSQL_URI = "mysql+pymysql://root:root@127.0.0.1:3306/inventory"
+MYSQL_URI = "mysql+pymysql://root:7030594657%40Nashik@127.0.0.1:3306/inventory"
 
 # ---------- CONFIG intent ----------
 # Mandatory approval gate before any delivery/execution (CONFIG_INTENT_PLAN.md §7).

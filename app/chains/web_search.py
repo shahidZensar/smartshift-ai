@@ -12,8 +12,12 @@ from ..util import with_history
 def web_search(query):
     # Replace with internal search proxy or SerpAPI
     logger.info("Performing web search for query: %r", query)
+    api_key = os.getenv("SERPAPI_API_KEY")
+    if not api_key:
+        logger.error("SERPAPI_API_KEY is not set; skipping web search and returning empty results")
+        return []
     url = "https://serpapi.com/search"
-    params = {"q": query, "api_key": '4e3379351b43635d0a2f402b14f3b0ba8c056b8664e2acc49449219bb6ea0cc9'}
+    params = {"q": query, "api_key": api_key}
     verify_ssl = os.getenv("SERPAPI_VERIFY_SSL", "false").strip().lower() in {"1", "true", "yes"}
 
     try:

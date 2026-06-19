@@ -10,7 +10,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 import aiofiles
 import requests
-from langchain_community.document_loaders import PyPDFLoader, TextLoader
+from langchain_community.document_loaders import PyPDFLoader, TextLoader, Docx2txtLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import WebBaseLoader
 from .rag import vectorstore_manager
@@ -84,12 +84,17 @@ def load_documents_from_file(file_path: Path) -> List[Any]:
         if file_ext == '.pdf':
             loader = PyPDFLoader(str(file_path))
             documents = loader.load()
+        elif file_ext in ['.docx', '.doc']:
+            # .docx is a binary (zip) container — it must NOT be read as text.
+            loader = Docx2txtLoader(str(file_path))
+            documents = loader.load()
         elif file_ext in ['.txt', '.md']:
-            loader = TextLoader(str(file_path))
+            # autodetect_encoding so non-UTF-8 text files don't crash the loader.
+            loader = TextLoader(str(file_path), autodetect_encoding=True)
             documents = loader.load()
         else:
-            # Fallback: read as text
-            with open(file_path, 'r', encoding='utf-8') as f:
+            # Fallback: read as text (ignore undecodable bytes rather than crash).
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 text = f.read()
             from langchain_core.documents import Document
             documents = [Document(page_content=text, metadata={"source": str(file_path)})]

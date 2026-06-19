@@ -529,7 +529,13 @@ class ConfigService:
             if _is_approve(message) and state.last_result:
                 logger.info("CONFIG idempotent re-send for session %r", session_id)
                 return state.last_result
-            state = ConfigState()  # start fresh
+            # Start fresh, but carry the last completed delivery (signature + result)
+            # so an identical repeat request returns the cache instead of looping the
+            # user back through target/approval (see the duplicate short-circuit below).
+            prev_sig, prev_result = state.last_executed_signature, state.last_result
+            state = ConfigState()
+            state.last_executed_signature = prev_sig
+            state.last_result = prev_result
 
         state.attempts += 1
         history = self._history_text(session_id)
@@ -657,6 +663,16 @@ class ConfigService:
                 answer = _collect_message(spec, missing, errors)  # text fallback for non-form clients
                 return _resp(answer, state, "form", extra={"form": form})
             return _resp(self._phrase(_collect_message(spec, missing, errors)), state, "user_input")
+
+        # ---- 4·idempotency: an identical, already-delivered request returns the cached
+        #      playbook and stays DONE — no re-running target/approval/delivery ("same
+        #      thing twice" shortcut). Fires only once a prior delivery exists; the
+        #      signature is type + collected fields (target is not part of the request).
+        if state.last_result and _signature(state.config_type, state.collected) == state.last_executed_signature:
+            logger.info("CONFIG duplicate request -> returning cached delivery for %r", session_id)
+            state.stage = ConfigStage.DONE
+            conversation_store.set_config_state(session_id, state)
+            return state.last_result
 
         # ---- 4a. LLM pre-flight: validate the collected values against the playbook ----
         # (semantic/safety pass; the deterministic presence/format check already passed).

@@ -51,6 +51,10 @@ _SEED_DEVICES: list[InventoryDevice] = [
     InventoryDevice(device_name="edge-rtr-02",  platform="ios", ansible_host="10.0.0.2", username="netadmin", password="Demo@123", group="routers"),
     InventoryDevice(device_name="core-sw-01",   platform="ios", ansible_host="10.0.1.1", username="netadmin", password="Demo@123", group="switches"),
     InventoryDevice(device_name="access-sw-02", platform="ios", ansible_host="10.0.1.2", username="netadmin", password="Demo@123", group="switches"),
+    # Test row with a MISSING field (blank username): picking this device in INTEGRATED
+    # mode triggers the "complete the missing inventory detail" form. The picker matches
+    # on device_name/ansible_host, so a blank username doesn't disturb device selection.
+    InventoryDevice(device_name="lab-rtr-09",   platform="ios", ansible_host="10.0.9.9", username="",         password="Demo@123", group="routers"),
 ]
 
 # `group` is a reserved word in MySQL -> always backtick it.
@@ -87,16 +91,24 @@ def _row_to_device(m) -> InventoryDevice:
 
 
 def ensure_schema_and_seed() -> None:
-    """Create the table if missing and seed dummy rows if it's empty. Idempotent."""
+    """Create the table if missing and ensure each dummy device exists. Idempotent, and
+    insert-only: a seed device added to _SEED_DEVICES later is inserted on the next run
+    even when the table is already populated; existing rows are never overwritten."""
     with _engine.begin() as conn:
         conn.execute(_CREATE_SQL)
-        count = conn.execute(text("SELECT COUNT(*) FROM config_inventory")).scalar() or 0
-        if count > 0:
-            logger.info("config_inventory: table present with %d rows; seed skipped", count)
-            return
+        existing = {r[0] for r in conn.execute(text("SELECT device_name FROM config_inventory")).fetchall()}
+        added = 0
         for d in _SEED_DEVICES:
+            if d.device_name in existing:
+                continue
             conn.execute(_INSERT_SQL, d.model_dump())
-        logger.info("config_inventory: seeded %d dummy devices", len(_SEED_DEVICES))
+            added += 1
+        if added:
+            logger.info("config_inventory: seeded %d new device(s) (%d already present)",
+                        added, len(existing))
+        else:
+            logger.info("config_inventory: all %d seed devices present; nothing to seed",
+                        len(_SEED_DEVICES))
 
 
 def list_devices(group: Optional[str] = None) -> list[InventoryDevice]:

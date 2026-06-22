@@ -106,6 +106,7 @@ class ConfigState(BaseModel):
     form_cache: Optional[Dict[str, Any]] = None
     target_mode: Optional[str] = None                         # "integrated" | "standalone" (future)
     target_device: Optional[Dict[str, Any]] = None
+    target_filling: bool = False                              # collecting connection fields missing from inventory
     delivery_mode: str = "manual"                             # "manual" (v1) | "automated" (future)
     approved: bool = False
     attempts: int = 0

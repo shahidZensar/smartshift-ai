@@ -51,13 +51,25 @@ _CANCEL_WORDS = {"cancel", "abort", "stop", "discard", "nevermind", "never mind"
 _AUTOMATED_PHRASES = ("automatically", "automated", "apply it for me", "apply it to the device",
                       "push it for me", "run it for me", "run it on the device", "do it for me on")
 
-# Standalone connection fields (collected transiently, never persisted/logged; §10.2).
-_CONN_FIELDS = [
-    ("device_name", "What name/hostname identifies the device?", "core-rtr-01"),
-    ("ansible_host", "What is the management IP address?", "10.0.0.1"),
-    ("username", "What login username should be used?", "netadmin"),
-    ("password", "What is the login password? (used only this session, never stored or logged)", "Demo@123"),
+# Connection fields, described once as FieldMeta so they reuse the same validation and
+# form-widget machinery as config fields. The password carries secret=True so it renders
+# as a masked input (frontend) and is redacted in every echo/log (backend).
+_CONN_FIELD_METAS: list[FieldMeta] = [
+    FieldMeta(name="device_name", required=True,
+              prompt="What name/hostname identifies the device?", example="core-rtr-01"),
+    FieldMeta(name="ansible_host", required=True,
+              prompt="What is the management IP address?", example="10.0.0.1", validate_as="ipv4"),
+    FieldMeta(name="username", required=True,
+              prompt="What login username should be used?", example="netadmin"),
+    FieldMeta(name="password", required=True,
+              prompt="What is the login password? (used only this session, never stored or logged)",
+              example="Demo@123", secret=True),
 ]
+_CONN_META = {m.name: m for m in _CONN_FIELD_METAS}
+# Standalone supplies everything incl. credentials. Integrated reads credentials securely
+# from inventory, so it only ever asks for connectivity fields the inventory row is missing.
+_STANDALONE_CONN_FIELDS = ["device_name", "ansible_host", "username", "password"]
+_INTEGRATED_CONN_FIELDS = ["device_name", "ansible_host", "username"]
 
 
 def _is_approve(message: str) -> bool:
@@ -228,6 +240,7 @@ def _resp(answer: str, state: ConfigState, awaiting: str, extra: Optional[dict] 
         "collected": _redact(state),
         "missing_fields": state.missing_fields,
         "delivery_mode": state.delivery_mode,
+        "target_device": _redact_target(state),
         "awaiting": awaiting,
     }
     if extra:
@@ -247,6 +260,15 @@ def _redact(state: ConfigState) -> dict:
         else:
             out[k] = v
     return out
+
+
+def _redact_target(state: ConfigState) -> Optional[dict]:
+    """Connection info safe to echo to the client: the password is always masked."""
+    td = state.target_device
+    if not td:
+        return None
+    return {k: ("***" if _CONN_META.get(k, FieldMeta(name=k, required=False, prompt="")).secret else v)
+            for k, v in td.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -298,6 +320,57 @@ def _build_form(spec: ConfigTypeSpec, state: ConfigState, missing: list[str], er
         "title": title,
         "description": description,
         "fields": fields,
+        "actions": {"submit": "Continue", "clear": "Clear", "cancel": "Cancel"},
+    }
+
+
+def _merge_conn(conn: dict, values: dict, fields: list[str]) -> tuple[dict, dict]:
+    """Merge connection values (form submission or NL extraction) onto `conn`, validating
+    each against its FieldMeta. Returns (merged_conn, errors); bad values are not stored."""
+    merged = dict(conn)
+    errors: dict[str, str] = {}
+    for f, v in (values or {}).items():
+        if f not in fields or v in (None, "", []):
+            continue
+        ok, norm, err = _validate(_CONN_META[f], v)
+        if ok:
+            merged[f] = norm
+        else:
+            errors[f] = err or f"invalid value for {f}"
+    return merged, errors
+
+
+def _build_connection_form(state: ConfigState, missing: list[str], errors: dict[str, str],
+                           mode: str, fields: list[str]) -> dict:
+    """Form card for the target's connection details — same shape/widgets as the config
+    form so the frontend renders it identically (password -> masked input)."""
+    show = [f for f in fields if f in missing or f in errors]
+    field_cards = []
+    for fname in show:
+        meta = _CONN_META[fname]
+        field_cards.append({
+            "name": fname,
+            "heading": fname.replace("_", " ").title(),
+            "description": meta.prompt,
+            "example": meta.example,
+            "type": _widget_type(meta),       # password -> masked input on the client
+            "required": True,
+            "value": None,                    # secrets/values are never pre-filled into the form
+            "error": errors.get(fname),
+        })
+    if mode == "standalone":
+        title = "Device Connection (Standalone)"
+        description = ("Provide the device's connection details. Credentials are used only "
+                       "for this session — never stored or logged.")
+    else:
+        dev = (state.target_device or {}).get("device_name", "this device")
+        title = "Complete Device Details"
+        description = (f"Some connection details for **{dev}** are missing from the inventory. "
+                       "Please provide them to continue.")
+    return {
+        "title": title,
+        "description": description,
+        "fields": field_cards,
         "actions": {"submit": "Continue", "clear": "Clear", "cancel": "Cancel"},
     }
 
@@ -427,7 +500,8 @@ class ConfigService:
         return text
 
     # ----- target resolution (§10.2) -----
-    def _resolve_target(self, message: str, state: ConfigState, spec: ConfigTypeSpec):
+    def _resolve_target(self, message: str, state: ConfigState, spec: ConfigTypeSpec,
+                        form_values: Optional[dict] = None):
         """Drive RESOLVE_TARGET one step per turn. Returns a response dict while more
         input is needed, or None once the target is fully resolved."""
         m = (message or "").strip().lower()
@@ -442,7 +516,8 @@ class ConfigService:
         else:
             just_set_mode = False
 
-        # 2) integrated -> pick a device from config_inventory.
+        # 2) integrated -> pick a device from config_inventory, then fill any connection
+        #    fields the inventory row is missing (asked via the same form mechanism).
         if state.target_mode == "integrated":
             if state.target_device is None:
                 devices = config_inventory.list_devices(spec.target_group) or config_inventory.list_devices()
@@ -453,22 +528,47 @@ class ConfigService:
                         logger.info("CONFIG target device picked: %r", picked.device_name)
                 if state.target_device is None:
                     return _resp(self._device_picker_question(devices, spec), state, "choose_device")
+
+            # apply user-supplied values only once we've started asking for missing fields
+            # (so the device-pick reply itself is never read as a field value).
+            conn = dict(state.target_device or {})
+            errors: dict[str, str] = {}
+            if state.target_filling and not just_set_mode:
+                values = form_values if form_values else extract_connection(message, conn)
+                conn, errors = _merge_conn(conn, values, _INTEGRATED_CONN_FIELDS)
+                state.target_device = conn
+            missing = [f for f in _INTEGRATED_CONN_FIELDS if not conn.get(f)]
+            if missing or errors:
+                state.target_filling = True
+                return self._connection_response(state, missing, errors, "integrated")
+            state.target_filling = False
             return None
 
         # 3) standalone -> collect connection details (transient, session-only).
         if state.target_mode == "standalone":
             conn = dict(state.target_device or {})
+            errors = {}
             if not just_set_mode:
-                extracted = extract_connection(message, conn)
-                if extracted:
-                    conn.update(extracted)
-                    state.target_device = conn
-            missing_conn = [f for f, _p, _e in _CONN_FIELDS if not conn.get(f)]
-            if missing_conn:
-                return _resp(self._connection_question(missing_conn), state, "user_input")
+                values = form_values if form_values else extract_connection(message, conn)
+                conn, errors = _merge_conn(conn, values, _STANDALONE_CONN_FIELDS)
+                state.target_device = conn
+            missing = [f for f in _STANDALONE_CONN_FIELDS if not conn.get(f)]
+            if missing or errors:
+                return self._connection_response(state, missing, errors, "standalone")
             return None
 
         return None
+
+    def _connection_response(self, state: ConfigState, missing: list[str],
+                             errors: dict[str, str], mode: str) -> dict:
+        """Ask for the missing/invalid connection fields — as a form when forms are on,
+        else as a plain-text question (both paths mask the password)."""
+        fields = _STANDALONE_CONN_FIELDS if mode == "standalone" else _INTEGRATED_CONN_FIELDS
+        asks = missing or list(errors.keys())
+        if CONFIG_USE_FORMS:
+            form = _build_connection_form(state, missing, errors, mode, fields)
+            return _resp(self._connection_question(asks), state, "form", extra={"form": form})
+        return _resp(self._phrase(self._connection_question(asks)), state, "user_input")
 
     def _parse_mode(self, m: str) -> Optional[str]:
         if any(w in m for w in ("standalone", "myself", "provide", "supply", "manual creds")) or m.strip() == "2":
@@ -486,7 +586,9 @@ class ConfigService:
                 if 0 <= idx < len(devices):
                     return devices[idx]
         for d in devices:
-            if d.device_name.lower() in m or d.ansible_host in m:
+            # guard against blank inventory fields: "" in m is always True, which would
+            # make an incomplete row match every reply and shadow the real pick.
+            if (d.device_name and d.device_name.lower() in m) or (d.ansible_host and d.ansible_host in m):
                 return d
         return None
 
@@ -508,15 +610,15 @@ class ConfigService:
         return "\n".join(lines)
 
     def _connection_question(self, missing_conn: list[str]) -> str:
-        prompts = {f: (p, e) for f, p, e in _CONN_FIELDS}
         if len(missing_conn) == 1:
-            f = missing_conn[0]
-            p, e = prompts[f]
-            return f"{p} (e.g. {e})"
-        lines = ["For a standalone target, I still need:"]
+            meta = _CONN_META[missing_conn[0]]
+            eg = f" (e.g. {meta.example})" if meta.example else ""
+            return f"{meta.prompt}{eg}"
+        lines = ["To reach the device, I still need:"]
         for f in missing_conn:
-            p, e = prompts[f]
-            lines.append(f"  • {p} — e.g. {e}")
+            meta = _CONN_META[f]
+            eg = f" — e.g. {meta.example}" if meta.example else ""
+            lines.append(f"  • {meta.prompt}{eg}")
         return "\n".join(lines)
 
     def handle(self, message: str, session_id: str, form_values: Optional[dict] = None) -> dict:
@@ -691,7 +793,7 @@ class ConfigService:
                 return _resp(self._phrase(_preflight_message(state.preflight_issues)), state, "user_input")
 
         # ---- 4b. resolve target: mode choice -> device picker / standalone details ----
-        target_prompt = self._resolve_target(message, state, spec)
+        target_prompt = self._resolve_target(message, state, spec, form_values)
         if target_prompt is not None:
             state.stage = ConfigStage.RESOLVE_TARGET
             conversation_store.set_config_state(session_id, state)

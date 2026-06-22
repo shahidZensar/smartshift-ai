@@ -50,7 +50,17 @@ RAG_TOP_K = 5
 RAG_INDEX_PATH = "data/rag_index"
 MEMORY_BASE_PATH = "data/session_memory"
 
-MYSQL_URI = "mysql+pymysql://root:7030594657%40Nashik@127.0.0.1:3306/inventory"
+MYSQL_URI = os.getenv("MYSQL_URI")
+if not MYSQL_URI:
+    _mysql_user = os.getenv("MYSQL_USER", "root")
+    _mysql_password = os.getenv("MYSQL_PASSWORD", "")
+    _mysql_host = os.getenv("MYSQL_HOST", "127.0.0.1")
+    _mysql_port = os.getenv("MYSQL_PORT", "3306")
+    _mysql_db = os.getenv("MYSQL_DB", "inventory")
+    MYSQL_URI = (
+        f"mysql+pymysql://{_mysql_user}:{quote_plus(_mysql_password)}"
+        f"@{_mysql_host}:{_mysql_port}/{_mysql_db}"
+    )
 
 # ---------- CONFIG intent ----------
 # Mandatory approval gate before any delivery/execution (CONFIG_INTENT_PLAN.md §7).

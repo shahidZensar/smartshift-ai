@@ -1,7 +1,7 @@
 """
 Admin endpoints for managing vector database, files, URLs, and MySQL data import
 """
-from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Query
+from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Query, Depends
 from fastapi.responses import JSONResponse
 from pathlib import Path
 import os
@@ -14,12 +14,21 @@ from langchain_community.document_loaders import PyPDFLoader, TextLoader, Docx2t
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import WebBaseLoader
 from .rag import vectorstore_manager
+from .auth import require_admin
+from .models import IngestUrlRequest
 from . import logger
 import pandas as pd
 from sqlalchemy import create_engine, text, inspect
 from .config import MYSQL_URI
 
-admin_router = APIRouter(prefix="/api/admin", tags=["admin"])
+# All admin endpoints are classified admin-only via the `require_admin` dependency.
+# It is currently a permissive no-op (auth/authz is future scope); enforcing RBAC
+# later means changing only `app/auth.py`, not these routes. See app/auth.py.
+admin_router = APIRouter(
+    prefix="/api/admin",
+    tags=["admin"],
+    dependencies=[Depends(require_admin)],
+)
 
 # Configuration
 UPLOAD_DIR = Path("data/uploads")
@@ -294,38 +303,98 @@ async def upload_file_to_db(
             detail=f"Error uploading file: {str(e)}"
         )
 
+@admin_router.post("/rag/ingest-url")
+async def ingest_url_endpoint(payload: IngestUrlRequest) -> Dict[str, Any]:
+    """
+    Admin-only: fetch a web page (or PDF) and index it into the RAG knowledge base.
+
+    Hardened ingestion (SSRF-guarded fetch, boilerplate-stripped extraction, chunk
+    metadata + content-hash idempotency). Reuses the shared chunker + embeddings +
+    FAISS vector store used for uploaded documents. See app/url_ingest.py.
+
+    Body: { url, title?, tags?, force? }
+    """
+    # Imported here so app start-up doesn't hard-depend on httpx/extractors being
+    # installed for the rest of the admin API to load.
+    from .url_ingest import ingest_url, UrlIngestError
+
+    try:
+        summary = await ingest_url(
+            url=payload.url,
+            title=payload.title,
+            tags=payload.tags,
+            force=payload.force,
+        )
+        return {"status": "success", "result": summary, "timestamp": datetime.now().isoformat()}
+    except UrlIngestError as e:
+        logger.warning("URL ingestion rejected (%s): %s", e.status_code, str(e))
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error ingesting URL: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error ingesting URL: {str(e)}")
+
+
+@admin_router.get("/rag/urls")
+async def list_ingested_urls_endpoint() -> Dict[str, Any]:
+    """Admin-only: list URLs currently indexed in the RAG knowledge base."""
+    from .url_ingest import list_ingested_urls
+
+    urls = list_ingested_urls()
+    return {"status": "success", "count": len(urls), "urls": urls}
+
+
+@admin_router.delete("/rag/url")
+async def delete_ingested_url_endpoint(url: str = Query(..., description="The ingested URL to remove")) -> Dict[str, Any]:
+    """Admin-only: remove all chunks indexed from a given URL and forget it."""
+    from .url_ingest import delete_ingested_url, UrlIngestError
+
+    try:
+        result = delete_ingested_url(url)
+        return {"status": "success", "result": result, "timestamp": datetime.now().isoformat()}
+    except UrlIngestError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error deleting ingested URL: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error deleting URL: {str(e)}")
+
+
 @admin_router.post("/upload-url")
 async def upload_url_to_db(
     url: str = Form(...),
     auto_index: bool = Form(True)
 ) -> Dict[str, Any]:
     """
-    Fetch content from URL and optionally index it to the vector database
+    Backward-compatible form endpoint. Delegates to the hardened URL ingestion
+    pipeline (SSRF-guarded fetch + extraction + idempotent upsert). Kept so existing
+    clients posting form data keep working; new clients should use /rag/ingest-url.
     """
+    from .url_ingest import ingest_url, UrlIngestError
+
     try:
-        # Validate URL
-        if not url.startswith(('http://', 'https://')):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid URL. Must start with http:// or https://"
-            )
-        
-        # Load and process content
-        documents = load_documents_from_url(url)
-        
-        # Index to vector store if requested
-        if auto_index and documents:
-            vectorstore_manager.add_documents(documents)
-            logger.info(f"Added {len(documents)} chunks to vector store from URL")
-        
+        if not auto_index:
+            # Preserve the original "fetch but don't index" contract.
+            documents = load_documents_from_url(url)
+            return {
+                "status": "success",
+                "message": "URL content fetched (not indexed)",
+                "url": url,
+                "chunks_added": 0,
+                "timestamp": datetime.now().isoformat(),
+            }
+
+        summary = await ingest_url(url=url)
         return {
             "status": "success",
-            "message": "URL content loaded and indexed successfully",
-            "url": url,
-            "chunks_added": len(documents) if auto_index else 0,
-            "timestamp": datetime.now().isoformat()
+            "message": summary.get("message", "URL content loaded and indexed successfully"),
+            "url": summary.get("url", url),
+            "chunks_added": summary.get("chunks_indexed", 0),
+            "ingest_status": summary.get("status"),
+            "timestamp": datetime.now().isoformat(),
         }
-    
+    except UrlIngestError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e))
     except HTTPException:
         raise
     except Exception as e:

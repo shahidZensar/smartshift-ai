@@ -248,10 +248,31 @@ async def askv1_question(request: QueryRequest):
         elif tool.strip() == "HYBRID":
             sql_context = await sql_chain(request, history_str)
             logger.info(f"Processing question: {request.question}")
+            # Focus RAG retrieval on the ACTUAL devices SQL returned (their product
+            # descriptions) instead of the verbose user prompt, so the relevant
+            # replacement datasheets surface rather than generic EOL-policy text.
+            rag_query = request.question
             try:
-                rag_context = vectorstore_manager.retrieve_docs(request.question)
+                _rows = json.loads(sql_context)
+                _descs = "; ".join(sorted({
+                    str(r.get("product_description", "")).lstrip("^").strip()
+                    for r in _rows if r.get("product_description")
+                }))
+                if _descs:
+                    rag_query = f"replacement product datasheet and upgrade guidance for: {_descs}"
+            except Exception:
+                pass  # sql_context not JSON (e.g. "No SQL context available.") -> use the question
+            try:
+                rag_context = vectorstore_manager.retrieve_docs(rag_query, k=8)
             except Exception as e:
               logger.error("Error retrieving RAG context: %s",   e)
+              rag_context = ""
+            # RAG parity (see chains/rag_chain.py): never feed an empty/`{}` context into
+            # the prompt as REPLACEMENT GUIDANCE. Normalize to an explicit no-documents
+            # marker so the model stays grounded and does not invent guidance.
+            if not rag_context:
+                logger.warning("No RAG context retrieved for HYBRID; using no-documents marker")
+                rag_context = "No relevant documents found."
             logger.info("Preparing final prompt and invoking llm")  # Log first 100 chars of SQL context
             logger.info("SQL context length:%r", sql_context)
             #response = final_chain_async(sql_context, rag_context, request)

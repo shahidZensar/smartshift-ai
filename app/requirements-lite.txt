@@ -28,3 +28,9 @@ accelerate>=0.26.0
 pypdf
 pyyaml
 docx2txt
+httpx
+trafilatura
+beautifulsoup4
+# --- test-only ---
+pytest
+pytest-asyncio

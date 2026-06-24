@@ -14,6 +14,9 @@ function AdminPanel({ isOpen, onClose }) {
   // Form states
   const [selectedFile, setSelectedFile] = useState(null)
   const [urlInput, setUrlInput] = useState('')
+  const [urlTitle, setUrlTitle] = useState('')
+  const [urlTags, setUrlTags] = useState('')
+  const [urlForce, setUrlForce] = useState(false)
   const [autoIndex, setAutoIndex] = useState(true)
   
   // CSV Import states
@@ -140,24 +143,39 @@ function AdminPanel({ isOpen, onClose }) {
     setSuccess(null)
 
     try {
-      const formData = new FormData()
-      formData.append('url', urlInput)
-      formData.append('auto_index', autoIndex)
+      const tags = urlTags
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean)
 
-      const response = await fetch(`${API_URL}/api/admin/upload-url`, {
+      const response = await fetch(`${API_URL}/api/admin/rag/ingest-url`, {
         method: 'POST',
-        body: formData
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: urlInput.trim(),
+          title: urlTitle.trim() || null,
+          tags: tags.length ? tags : null,
+          force: urlForce
+        })
       })
 
       if (!response.ok) {
         const errorData = await response.json()
-        throw new Error(errorData.detail || 'URL processing failed')
+        throw new Error(errorData.detail || errorData.error || 'URL processing failed')
       }
 
       const data = await response.json()
-      setSuccess(`URL processed successfully! Added ${data.chunks_added} chunks to vector database.`)
+      const r = data.result || {}
+      if (r.status === 'unchanged') {
+        setSuccess('URL content unchanged since last ingestion — nothing re-indexed. (Use "Force re-fetch" to re-index.)')
+      } else {
+        setSuccess(`URL ${r.status === 'reindexed' ? 're-indexed' : 'indexed'} successfully! Added ${r.chunks_indexed} chunks to the vector database.`)
+      }
       setUrlInput('')
-      
+      setUrlTitle('')
+      setUrlTags('')
+      setUrlForce(false)
+
       // Reload files
       setTimeout(() => {
         loadFiles()
@@ -464,21 +482,37 @@ function AdminPanel({ isOpen, onClose }) {
                   disabled={loading}
                   className="url-input"
                 />
+                <input
+                  type="text"
+                  placeholder="Title (optional)"
+                  value={urlTitle}
+                  onChange={(e) => setUrlTitle(e.target.value)}
+                  disabled={loading}
+                  className="url-input"
+                />
+                <input
+                  type="text"
+                  placeholder="Tags, comma-separated (optional)"
+                  value={urlTags}
+                  onChange={(e) => setUrlTags(e.target.value)}
+                  disabled={loading}
+                  className="url-input"
+                />
               </div>
 
               <div className="option-group">
                 <label className="checkbox-label">
                   <input
                     type="checkbox"
-                    checked={autoIndex}
-                    onChange={(e) => setAutoIndex(e.target.checked)}
+                    checked={urlForce}
+                    onChange={(e) => setUrlForce(e.target.checked)}
                     disabled={loading}
                   />
-                  <span>Auto-index to vector database</span>
+                  <span>Force re-fetch (re-index even if content is unchanged)</span>
                 </label>
               </div>
 
-              <button 
+              <button
                 className="btn btn-primary"
                 onClick={uploadUrl}
                 disabled={!urlInput.trim() || loading}

@@ -74,6 +74,14 @@ class SQLResponse(BaseModel):
     params: List[str]
 
 
+class IngestUrlRequest(BaseModel):
+    """Admin request to fetch a web page/PDF and index it into the RAG knowledge base."""
+    url: str = Field(..., description="http/https URL to fetch and index")
+    title: Optional[str] = Field(None, description="Optional human-readable title for the source")
+    tags: Optional[List[str]] = Field(None, description="Optional tags stored on each indexed chunk")
+    force: bool = Field(False, description="Re-fetch and re-index even if content is unchanged")
+
+
 # ==================== CONFIG intent ====================
 
 class ConfigStage(str, Enum):

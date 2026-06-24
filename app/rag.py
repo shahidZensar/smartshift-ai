@@ -1,5 +1,6 @@
 import os
 import time
+import uuid
 
 from . import logger
 from langchain_community.vectorstores import FAISS
@@ -18,14 +19,14 @@ class VectorStoreManager:
     def __init__(self):
         self.vectorstore = None
 
-    def _add_batch_with_retry(self, batch):
-        """Embed+add one batch, retrying on provider rate-limit (HTTP 429)."""
+    def _add_batch_with_retry(self, batch, batch_ids):
+        """Embed+add one batch (with explicit ids), retrying on provider rate-limit (HTTP 429)."""
         for attempt in range(1, EMBED_MAX_RETRIES + 1):
             try:
                 if not self.vectorstore:
-                    self.vectorstore = FAISS.from_documents(batch, embeddings)
+                    self.vectorstore = FAISS.from_documents(batch, embeddings, ids=batch_ids)
                 else:
-                    self.vectorstore.add_documents(batch)
+                    self.vectorstore.add_documents(batch, ids=batch_ids)
                 return
             except Exception as e:
                 msg = str(e)
@@ -39,23 +40,50 @@ class VectorStoreManager:
                     continue
                 raise
 
-    def add_documents(self, documents):
+    def add_documents(self, documents, ids=None):
         """Index documents in batches and persist. Raises on persistent failure
-        (no longer swallows errors, so callers/uploads see real failures)."""
+        (no longer swallows errors, so callers/uploads see real failures).
+
+        Returns the list of vector ids assigned to the documents so callers can
+        later delete/replace them (used for idempotent URL re-indexing). When
+        `ids` is not supplied, fresh uuids are generated."""
         if not documents:
             logger.warning("add_documents called with no documents")
-            return
+            return []
         total = len(documents)
+        if ids is None:
+            ids = [str(uuid.uuid4()) for _ in range(total)]
+        elif len(ids) != total:
+            raise ValueError("ids length (%d) must match documents length (%d)" % (len(ids), total))
         logger.info("Indexing %d documents in batches of %d", total, EMBED_BATCH_SIZE)
         try:
             for start in range(0, total, EMBED_BATCH_SIZE):
                 batch = documents[start:start + EMBED_BATCH_SIZE]
-                self._add_batch_with_retry(batch)
+                batch_ids = ids[start:start + EMBED_BATCH_SIZE]
+                self._add_batch_with_retry(batch, batch_ids)
                 self.save_vectorstore(RAG_INDEX_PATH)  # persist incrementally
                 logger.info("Indexed %d/%d documents", min(start + EMBED_BATCH_SIZE, total), total)
             logger.info("Finished indexing %d documents", total)
+            return ids
         except Exception as e:
             logger.error("Failed to index documents: %s", str(e))
+            raise
+
+    def delete_documents(self, ids):
+        """Remove previously-indexed chunks by id and persist. No-op if the store
+        is empty or `ids` is falsy. Used to replace stale URL content on re-fetch."""
+        if not ids:
+            return 0
+        if not self.vectorstore:
+            logger.warning("delete_documents called but vector store is not initialized")
+            return 0
+        try:
+            self.vectorstore.delete(ids)
+            self.save_vectorstore(RAG_INDEX_PATH)
+            logger.info("Deleted %d chunks from vector store", len(ids))
+            return len(ids)
+        except Exception as e:
+            logger.error("Failed to delete documents: %s", str(e))
             raise
 
     def search(self, query, k=RAG_TOP_K):

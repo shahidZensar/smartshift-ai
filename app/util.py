@@ -294,6 +294,14 @@ REPLACEMENT GUIDANCE: {rag_context}
 USER QUESTION: {question}
 CURRENT DATE: {current_date}
 
+REPLACEMENT GUIDANCE RULES (recommendations must be grounded, not generic):
+- REPLACEMENT GUIDANCE holds the content of the provided documents (e.g. a product datasheet). It is the ONLY allowed source for a specific replacement MODEL.
+- If REPLACEMENT GUIDANCE describes a product of the SAME PRODUCT FAMILY as the device (switch -> switch, wireless controller -> wireless controller, router -> router), you MUST recommend that product BY NAME as the modernization target (e.g. "Cisco C9610 Series Smart Switches") - EVEN IF the documents do not explicitly mention this exact device model. Do not demand an explicit old-model-to-new-model mapping; same family is sufficient.
+- Same family but a different class or size (e.g. a fixed access switch vs a modular/core switch) STILL counts - recommend it and briefly note the class difference in Summary. Do NOT withhold it for this reason.
+- Do NOT recommend across different families: a switch datasheet must NOT be offered to replace wireless LAN controllers, routers, access points, firewalls, or IP phones.
+- Output "No specific replacement guidance in provided documents; plan a like-for-like refresh per vendor lifecycle" ONLY when REPLACEMENT GUIDANCE contains NO product of the device's family (or is "No relevant documents found.").
+- NEVER invent a replacement model that is not present in REPLACEMENT GUIDANCE.
+
 STRICT FORMAT RULES:
 - Output must be plain text only.
 - Do not use JSON, XML, YAML, tables, or code blocks.
@@ -316,7 +324,7 @@ OUTPUT FORMAT (REPEAT FOR EACH DEVICE, following the same order as input):
   Support Ends: <last_date_of_support>
   Days Until EOL: <eol>
   Risk Level: <CRITICAL|HIGH|MEDIUM|LOW|UNKNOWN>
-  Recommendation: <specific replacement model or upgrade action>
+  Recommendation: <replacement model from REPLACEMENT GUIDANCE if it is the SAME product family as this device; otherwise "No specific replacement guidance in provided documents; plan a like-for-like refresh per vendor lifecycle">
   Summary: <one-line device status with recommended action>
                                                                                                
 (Leave one blank line between devices.)

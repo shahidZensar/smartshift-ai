@@ -19,6 +19,7 @@ function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true)
   const [isAdminOpen, setIsAdminOpen] = useState(false)
   const [error, setError] = useState(null)
+  const [provider, setProvider] = useState('azure')
   const messagesEndRef = useRef(null)
 
   const scrollToBottom = () => {
@@ -93,7 +94,8 @@ function App() {
           session_id: sessionId,
           include_context: true,
           history: history,
-          form_values: formValues
+          form_values: formValues,
+          provider: provider
         })
       })
 
@@ -158,12 +160,14 @@ function App() {
 
   return (
     <div className="app-container">
-      <Sidebar 
+      <Sidebar
         isOpen={isSidebarOpen}
         onToggle={() => setIsSidebarOpen(!isSidebarOpen)}
         onNewChat={handleNewChat}
         onClearChat={handleClearChat}
         onOpenAdmin={() => setIsAdminOpen(true)}
+        provider={provider}
+        onProviderChange={setProvider}
       />
       <AdminPanel
         isOpen={isAdminOpen}

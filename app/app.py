@@ -27,6 +27,8 @@ from .chains.sql_chain import sql_chain
 from .chains.response_chain import final_chain_async, final_chain, final_structured_chain
 from .chains.web_search import web_search, web_search_chain
 from .chains.rag_chain import rag_chain
+from .chains.local_chain import local_full_chat
+from .decision import local_llm
 from .router import classify_intent
 from .services.conversation_store import conversation_store
 from .services.config_service import config_service
@@ -178,6 +180,72 @@ async def ask_question(request: QueryRequest):
             detail=f"Error processing question: {str(e)}"
         )
 
+async def _handle_local_chat(request: QueryRequest):
+    """Local LLM path — full workflow using Ollama gemma4:latest only.
+    Handles CONFIG / SQL / RAG / HYBRID / SEARCH intents; CONFIG delegates to
+    config_service (same as the Azure path) while all other intents stay local."""
+    session_id = request.session_id or str(uuid.uuid4())
+    history_str = conversation_store.format_recent(session_id)
+
+    # Resume an in-progress CONFIG conversation without re-classifying.
+    # Also route form submissions directly: form_values can only arrive from a CONFIG
+    # form, so they are always a CONFIG continuation even if the stored stage is DONE
+    # (e.g. when a new session UUID was generated due to a null session_id).
+    form_values = getattr(request, "form_values", None)
+    active_cfg = conversation_store.get_config_state(session_id)
+    if bool(form_values) or (active_cfg is not None and active_cfg.stage != ConfigStage.DONE):
+        config_payload = config_service.handle(
+            request.question, session_id, form_values=form_values,
+            llm=local_llm,
+        )
+        conversation_store.append_turn(session_id, "user", request.question)
+        conversation_store.append_turn(session_id, "assistant", config_payload.get("answer", ""))
+        content = {
+            "session_id": session_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "sources": [],
+            "follow_up_questions": [],
+            "provider": "local",
+        }
+        content.update(config_payload)
+        return JSONResponse(status_code=200, content=content)
+
+    try:
+        answer, intent, config_payload = await local_full_chat(request, history_str, session_id=session_id)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        logger.error("Local LLM error: %s", e)
+        raise HTTPException(status_code=500, detail=f"Local LLM error: {e}")
+    conversation_store.append_turn(session_id, "user", request.question)
+    conversation_store.append_turn(session_id, "assistant", answer)
+    logger.info("Local LLM response generated — session=%r intent=%r", session_id, intent)
+
+    if intent == "CONFIG" and config_payload:
+        content = {
+            "session_id": session_id,
+            "timestamp": datetime.utcnow().isoformat(),
+            "sources": [],
+            "follow_up_questions": [],
+            "provider": "local",
+        }
+        content.update(config_payload)
+        return JSONResponse(status_code=200, content=content)
+
+    return JSONResponse(
+        status_code=200,
+        content={
+            "answer": answer,
+            "session_id": session_id,
+            "provider": "local",
+            "intent": intent,
+            "timestamp": datetime.utcnow().isoformat(),
+            "sources": [],
+            "follow_up_questions": [],
+        },
+    )
+
+
 @app.post("/api/v1/chat", response_model=QueryResponse)
 async def askv1_question(request: QueryRequest):
     """
@@ -187,6 +255,10 @@ async def askv1_question(request: QueryRequest):
     - **session_id**: Optional session ID for conversation tracking
     - **include_context**: Whether to include retrieved context
     """
+    # ---- Local LLM path (Ollama) — kept fully separate from Azure chains ----
+    if getattr(request, "provider", "azure") == "local":
+        return await _handle_local_chat(request)
+
     sql_context: str = "No SQL context available."
     rag_context = {}
     response = None
@@ -204,8 +276,10 @@ async def askv1_question(request: QueryRequest):
         history_str = conversation_store.format_recent(session_id)
 
         # Resume an in-progress CONFIG conversation without re-classifying.
+        # Also route form submissions directly (same reason as the local path above).
+        _form_values = getattr(request, "form_values", None)
         active_cfg = conversation_store.get_config_state(session_id)
-        config_in_progress = active_cfg is not None and active_cfg.stage != ConfigStage.DONE
+        config_in_progress = bool(_form_values) or (active_cfg is not None and active_cfg.stage != ConfigStage.DONE)
 
         if config_in_progress:
             tool = "CONFIG"
@@ -216,7 +290,7 @@ async def askv1_question(request: QueryRequest):
         # --- CONFIG intent: stateful refinement loop (see CONFIG_INTENT_PLAN.md) ---
         if tool.strip() == "CONFIG":
             config_payload = config_service.handle(
-                request.question, session_id, form_values=getattr(request, "form_values", None)
+                request.question, session_id, form_values=_form_values
             )
             if config_payload.get("route") == "NOT_CONFIG":
                 # Semantic gate decided this isn't a configuration action after all.

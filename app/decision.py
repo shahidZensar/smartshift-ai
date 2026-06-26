@@ -291,8 +291,37 @@ except Exception as e:
     logger.warning("Failed to initialize OpenAI-compatible LLM, using default: %s", str(e))
     openai_llm = llm_chat
 
-logger.info("All LLM instances initialized successfully. Provider: %s, Model: %s", 
+logger.info("All LLM instances initialized successfully. Provider: %s, Model: %s",
             MODEL_PROVIDER, MODEL)
+
+
+# ========== LOCAL LLM INSTANCES (Ollama — always localhost:11434) ==========
+# These are initialized independently of the primary provider (Azure/OpenAI/etc.).
+# If Ollama is not running, both will be None and the local chat path raises a clear error.
+_LOCAL_OLLAMA_BASE_URL = "http://localhost:11434"
+_LOCAL_CHAT_MODEL = os.getenv("LOCAL_MODEL", "gemma4:latest")
+_LOCAL_EMBED_MODEL = os.getenv("LOCAL_EMBEDDING_MODEL", "nomic-embed-text:latest")
+
+try:
+    from langchain_community.embeddings import OllamaEmbeddings as _OllamaEmbeddings
+    local_llm = OllamaLLM(
+        model=_LOCAL_CHAT_MODEL,
+        base_url=_LOCAL_OLLAMA_BASE_URL,
+        temperature=0,
+        top_p=0,
+    )
+    local_embeddings = _OllamaEmbeddings(
+        model=_LOCAL_EMBED_MODEL,
+        base_url=_LOCAL_OLLAMA_BASE_URL,
+    )
+    logger.info(
+        "✓ Local Ollama instances ready — LLM: %s, Embeddings: %s",
+        _LOCAL_CHAT_MODEL, _LOCAL_EMBED_MODEL,
+    )
+except Exception as _local_err:
+    local_llm = None
+    local_embeddings = None
+    logger.warning("Local Ollama unavailable (is Ollama running?): %s", _local_err)
 
 # ---------- ROUTING DECISION ----------
 

@@ -2,7 +2,7 @@ import React from 'react'
 import { Menu, Plus, Trash2, Settings, HelpCircle, Lock } from 'lucide-react'
 import '../styles/Sidebar.css'
 
-function Sidebar({ isOpen, onToggle, onNewChat, onClearChat, onOpenAdmin }) {
+function Sidebar({ isOpen, onToggle, onNewChat, onClearChat, onOpenAdmin, provider = 'azure', onProviderChange }) {
   return (
     <>
       <button 
@@ -54,11 +54,36 @@ function Sidebar({ isOpen, onToggle, onNewChat, onClearChat, onOpenAdmin }) {
         </div>
 
         <div className="sidebar-section">
+          <h3 className="section-title">LLM Provider</h3>
+          <div className="provider-toggle">
+            <button
+              className={`provider-btn${provider === 'local' ? ' active local' : ''}`}
+              onClick={() => onProviderChange('local')}
+              title="Local Ollama — gemma4:latest (no cloud calls)"
+            >
+              <span>⚡</span>
+              <span>Local</span>
+            </button>
+            <button
+              className={`provider-btn${provider === 'azure' ? ' active azure' : ''}`}
+              onClick={() => onProviderChange('azure')}
+              title="Azure OpenAI — gpt-4o"
+            >
+              <span>☁</span>
+              <span>Azure</span>
+            </button>
+          </div>
+          <div className="provider-hint">
+            {provider === 'local' ? 'gemma4:latest · Ollama' : 'gpt-4o · Azure OpenAI'}
+          </div>
+        </div>
+
+        <div className="sidebar-section">
           <h3 className="section-title">System Status</h3>
           <div className="info-grid">
             <div className="info-item">
               <span className="info-label">Model</span>
-              <span className="info-value">Llama 3.2</span>
+              <span className="info-value">{provider === 'local' ? 'Gemma 4 (Local)' : 'GPT-4o (Azure)'}</span>
             </div>
             <div className="info-item">
               <span className="info-label">Backend</span>

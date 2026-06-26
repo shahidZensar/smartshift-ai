@@ -572,15 +572,16 @@ class ConfigService:
         # Exclude the just-appended current user turn handled by caller ordering.
         return "\n".join(f"{t.role}: {t.content}" for t in turns) or ""
 
-    def _phrase(self, text: str) -> str:
+    def _phrase(self, text: str, llm=None) -> str:
         """Optionally polish a follow-up so it reads naturally (§6, decision C)."""
         if CONFIG_LLM_PHRASING:
-            return phrase_question(text)
+            return phrase_question(text, llm=llm)
         return text
 
     # ----- target resolution (§10.2) -----
     def _resolve_target(self, message: str, state: ConfigState, spec: ConfigTypeSpec,
-                        form_values: Optional[dict] = None, device_rows: Optional[list] = None):
+                        form_values: Optional[dict] = None, device_rows: Optional[list] = None,
+                        llm=None):
         """Drive RESOLVE_TARGET one step per turn. Returns a response dict while more
         input is needed, or None once the target is fully resolved.
 
@@ -633,7 +634,7 @@ class ConfigService:
             conn = dict(state.target_device or {})
             errors: dict[str, str] = {}
             if state.target_filling and not just_set_mode:
-                values = form_values if form_values else extract_connection(message, conn)
+                values = form_values if form_values else extract_connection(message, conn, llm=llm)
                 conn, errors = _merge_conn(conn, values, _INTEGRATED_CONN_FIELDS)
                 state.target_device = conn
             missing = [f for f in _INTEGRATED_CONN_FIELDS if not conn.get(f)]
@@ -664,7 +665,7 @@ class ConfigService:
             conn = dict(state.target_device or {})
             errors: dict[str, str] = {}
             if not just_set_mode:
-                values = extract_connection(message, conn)
+                values = extract_connection(message, conn, llm=llm)
                 conn, errors = _merge_conn(conn, values, _STANDALONE_CONN_FIELDS)
                 state.target_device = conn
             missing = [f for f in _STANDALONE_CONN_FIELDS if not conn.get(f)]
@@ -774,7 +775,7 @@ class ConfigService:
             lines.append(f"  • {meta.prompt}{eg}")
         return "\n".join(lines)
 
-    def handle(self, message: str, session_id: str, form_values: Optional[dict] = None) -> dict:
+    def handle(self, message: str, session_id: str, form_values: Optional[dict] = None, llm=None) -> dict:
         state = conversation_store.get_config_state(session_id)
         if state is None:
             state = ConfigState()
@@ -827,7 +828,21 @@ class ConfigService:
                     state.candidates = []
 
             if not state.config_type:
-                route, ctype, candidates = self._detect(message, history)
+                if form_values:
+                    # Structured form submission with no recoverable config state
+                    # (session expired or stale session_id from the client).
+                    # Running detect_type on '[form submitted]' always returns NOT_CONFIG,
+                    # so skip the gate entirely and re-prompt the user.
+                    logger.info("CONFIG form submission with no active state for session %r — re-prompting", session_id)
+                    conversation_store.clear_config_state(session_id)
+                    state.stage = ConfigStage.DONE
+                    return _resp(
+                        "It looks like the session timed out while you were filling in the form. "
+                        "Please tell me what you'd like to configure again "
+                        "(e.g. 'configure VLAN named server').",
+                        state, "none",
+                    )
+                route, ctype, candidates = self._detect(message, history, llm=llm)
 
                 # ---- semantic intent gate (runs only here, inside CONFIG, before type mapping) ----
                 if route == "DEVICE_REFERENCE":
@@ -891,7 +906,7 @@ class ConfigService:
                 state.collected, errors = _merge_and_validate(spec, state.collected, form_values)
             elif CONFIG_USE_FORMS and not state.initial_extracted:
                 # First turn with forms on: ONE combined LLM call (extract + build copy).
-                fb = build_form(spec, message, history)
+                fb = build_form(spec, message, history, llm=llm)
                 state.initial_extracted = True
                 if fb is not None:
                     state.form_cache = {
@@ -902,11 +917,11 @@ class ConfigService:
                     }
                     extracted = fb.extracted
                 else:
-                    extracted = extract_fields(state.config_type, message, state.collected, history, spec)
+                    extracted = extract_fields(state.config_type, message, state.collected, history, spec, llm=llm)
                 state.collected, errors = _merge_and_validate(spec, state.collected, extracted)
             else:
                 # Forms off, OR a typed free-text reply after the form was shown (fallback).
-                extracted = extract_fields(state.config_type, message, state.collected, history, spec)
+                extracted = extract_fields(state.config_type, message, state.collected, history, spec, llm=llm)
                 state.collected, errors = _merge_and_validate(spec, state.collected, extracted)
             if state.collected != before:
                 state.attempts = 1  # forward progress: a slot changed -> reset the cap
@@ -923,7 +938,7 @@ class ConfigService:
                 form = _build_form(spec, state, missing, errors)
                 answer = _collect_message(spec, missing, errors)  # text fallback for non-form clients
                 return _resp(answer, state, "form", extra={"form": form})
-            return _resp(self._phrase(_collect_message(spec, missing, errors)), state, "user_input")
+            return _resp(self._phrase(_collect_message(spec, missing, errors), llm=llm), state, "user_input")
 
         # ---- 4·idempotency: an identical, already-delivered request returns the cached
         #      playbook and stays DONE — no re-running target/approval/delivery ("same
@@ -941,7 +956,9 @@ class ConfigService:
         if CONFIG_LLM_PREFLIGHT and not approve_signal:
             pf_sig = _signature(state.config_type, state.collected)
             if pf_sig != state.preflight_sig:
-                pf = preflight_validate(spec, state.collected, _playbook_text(spec))
+                logger.info("CONFIG preflight: running for type=%r collected_fields=%s",
+                            state.config_type, list(state.collected.keys()))
+                pf = preflight_validate(spec, state.collected, _playbook_text(spec), llm=llm)
                 state.preflight_sig = pf_sig
                 state.preflight_ok = pf.ok
                 state.preflight_issues = pf.issues or []
@@ -949,10 +966,10 @@ class ConfigService:
             if not state.preflight_ok:
                 state.stage = ConfigStage.COLLECT_FIELDS
                 conversation_store.set_config_state(session_id, state)
-                return _resp(self._phrase(_preflight_message(state.preflight_issues)), state, "user_input")
+                return _resp(self._phrase(_preflight_message(state.preflight_issues), llm=llm), state, "user_input")
 
         # ---- 4b. resolve target: mode choice -> device picker / standalone details ----
-        target_prompt = self._resolve_target(message, state, spec, form_values, device_rows)
+        target_prompt = self._resolve_target(message, state, spec, form_values, device_rows, llm=llm)
         if target_prompt is not None:
             state.stage = ConfigStage.RESOLVE_TARGET
             conversation_store.set_config_state(session_id, state)
@@ -997,7 +1014,7 @@ class ConfigService:
         return result
 
     # ----- helpers -----
-    def _detect(self, message: str, history: str) -> tuple[str, Optional[str], list[str]]:
+    def _detect(self, message: str, history: str, llm=None) -> tuple[str, Optional[str], list[str]]:
         """Semantic gate + config_type resolution, before any config-type mapping.
 
         Returns (route, resolved_type, candidates):
@@ -1017,7 +1034,7 @@ class ConfigService:
             logger.info("CONFIG type resolved by keyword: %r", hits[0])
             return "CONFIG_ACTION", hits[0], []
 
-        detection = detect_type(message, history)
+        detection = detect_type(message, history, llm=llm)
         route = detection.route if detection.route in GATE_ROUTES else "CONFIG_ACTION"
 
         # 2) keyword collision -> config keywords ARE present, so it is a config action;

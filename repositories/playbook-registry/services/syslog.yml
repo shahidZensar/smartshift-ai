@@ -1,0 +1,19 @@
+---
+# CONFIG intent: SYSLOG   | category: services
+# required_fields: syslog_server
+# optional: severity_level (default informational), state (present/absent)
+# e.g. -e "syslog_server=10.0.0.60 severity_level=informational"
+
+- name: Configure syslog
+  hosts: "{{ target_hosts | default('all') }}"
+  gather_facts: false
+  connection: network_cli
+
+  tasks:
+    - name: "Ensure syslog server {{ syslog_server }} is {{ state | default('present') }}"
+      cisco.ios.ios_logging_global:
+        config:
+          hosts:
+            - hostname: "{{ syslog_server }}"
+          trap: "{{ severity_level | default('informational') }}"
+        state: "{{ 'merged' if (state | default('present')) == 'present' else 'deleted' }}"

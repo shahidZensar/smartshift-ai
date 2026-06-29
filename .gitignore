@@ -1,0 +1,62 @@
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ===== Virtual environments =====
+venv/
+.venv/
+env/
+ENV/
+
+# ===== Environment / secrets =====
+.env
+.env.*
+app/.env
+app/.env.*
+app/**/.env*
+ui/.env
+ui/.env.*
+ui/**/.env*
+*.pem
+*.key
+
+# ===== Data & generated artifacts =====
+# Uploaded source files, FAISS vector indexes, and per-session memory are
+# regenerated at runtime and can be large — never commit them.
+data/uploads/
+data/rag_index/
+data/session_memory/
+data/_*/
+*.faiss
+*.pkl
+*.index
+
+# ===== Logs =====
+*.log
+logs/
+
+# ===== Node / frontend (ui) =====
+node_modules/
+ui/dist/
+ui/build/
+.cache/
+
+# ===== IDE / editor =====
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+
+SmartShift_CONFIG_Change_Table.md

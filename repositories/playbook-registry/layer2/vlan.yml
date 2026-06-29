@@ -1,0 +1,18 @@
+---
+# CONFIG intent: VLAN   | category: layer2
+# required_fields: vlan_id, vlan_name
+# optional: state (present/absent)
+# e.g. -e "vlan_id=30 vlan_name=FINANCE"
+
+- name: Configure VLAN
+  hosts: "{{ target_hosts | default('switches') }}"
+  gather_facts: false
+  connection: network_cli
+
+  tasks:
+    - name: "Ensure VLAN {{ vlan_id }} ({{ vlan_name }}) is {{ state | default('present') }}"
+      cisco.ios.ios_vlans:
+        config:
+          - vlan_id: "{{ vlan_id }}"
+            name: "{{ vlan_name }}"
+        state: "{{ 'merged' if (state | default('present')) == 'present' else 'deleted' }}"

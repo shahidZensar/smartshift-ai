@@ -1,0 +1,24 @@
+---
+# CONFIG intent: STATIC_ROUTE   | category: layer3
+# required_fields: destination_network, subnet_mask, next_hop
+# optional: admin_distance, state (present/absent)
+# NOTE: subnet_mask is the PREFIX LENGTH for this demo (e.g. 24).
+# e.g. -e "destination_network=10.10.10.0 subnet_mask=24 next_hop=192.168.1.254"
+
+- name: Configure static route
+  hosts: "{{ target_hosts | default('routers') }}"
+  gather_facts: false
+  connection: network_cli
+
+  tasks:
+    - name: "Ensure route to {{ destination_network }}/{{ subnet_mask }} via {{ next_hop }} is {{ state | default('present') }}"
+      cisco.ios.ios_static_routes:
+        config:
+          - address_families:
+              - afi: ipv4
+                routes:
+                  - dest: "{{ destination_network }}/{{ subnet_mask }}"
+                    next_hops:
+                      - forward_router_address: "{{ next_hop }}"
+                        distance_metric: "{{ admin_distance | default(omit) }}"
+        state: "{{ 'merged' if (state | default('present')) == 'present' else 'deleted' }}"

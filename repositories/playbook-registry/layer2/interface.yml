@@ -1,0 +1,29 @@
+---
+# CONFIG intent: INTERFACE_L2 (Configure Switchport)   | category: layer2
+# required_fields: interface_name, mode, access_vlan
+# optional: description, admin_state (up/down)
+# mode: access or trunk. For access mode, access_vlan is the membership VLAN.
+# e.g. -e "interface_name=GigabitEthernet0/1 mode=access access_vlan=30"
+
+- name: Configure L2 interface (switchport)
+  hosts: "{{ target_hosts | default('switches') }}"
+  gather_facts: false
+  connection: network_cli
+
+  tasks:
+    - name: "Set description and admin state on {{ interface_name }}"
+      cisco.ios.ios_interfaces:
+        config:
+          - name: "{{ interface_name }}"
+            description: "{{ description | default('') }}"
+            enabled: "{{ (admin_state | default('up')) == 'up' }}"
+        state: merged
+
+    - name: "Set switchport mode {{ mode }} on {{ interface_name }}"
+      cisco.ios.ios_l2_interfaces:
+        config:
+          - name: "{{ interface_name }}"
+            mode: "{{ mode }}"
+            access:
+              vlan: "{{ access_vlan }}"
+        state: merged

@@ -1,0 +1,17 @@
+---
+# CONFIG intent: BANNER   | category: management
+# required_fields: banner_text
+# optional: banner_type (login/motd/exec, default login), state (present/absent)
+# e.g. -e "banner_text='Authorized access only' banner_type=login"
+
+- name: Configure banner
+  hosts: "{{ target_hosts | default('all') }}"
+  gather_facts: false
+  connection: network_cli
+
+  tasks:
+    - name: "Set {{ banner_type | default('login') }} banner"
+      cisco.ios.ios_banner:
+        banner: "{{ banner_type | default('login') }}"
+        text: "{{ banner_text }}"
+        state: "{{ state | default('present') }}"

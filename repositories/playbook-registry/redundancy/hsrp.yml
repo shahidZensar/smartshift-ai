@@ -1,0 +1,25 @@
+---
+# CONFIG intent: HSRP (Hot Standby Router Protocol)   | category: redundancy (Tier 2)
+# required_fields: interface_name, group_id, virtual_ip
+# optional: priority (default 100), preempt (default true), state (present/absent)
+# Higher priority wins the active role; preempt lets a recovered router reclaim it.
+# e.g. -e "interface_name=Vlan10 group_id=1 virtual_ip=10.1.1.1 priority=110"
+
+- name: Configure HSRP
+  hosts: "{{ target_hosts | default('routers') }}"
+  gather_facts: false
+  connection: network_cli
+
+  tasks:
+    - name: "Ensure HSRP group {{ group_id }} on {{ interface_name }} is {{ state | default('present') }}"
+      cisco.ios.ios_hsrp_interfaces:
+        config:
+          - name: "{{ interface_name }}"
+            standby_options:
+              - group_no: "{{ group_id }}"
+                priority: "{{ priority | default(100) }}"
+                preempt:
+                  enabled: "{{ preempt | default(true) }}"
+                ip:
+                  - virtual_ip: "{{ virtual_ip }}"
+        state: "{{ 'merged' if (state | default('present')) == 'present' else 'deleted' }}"

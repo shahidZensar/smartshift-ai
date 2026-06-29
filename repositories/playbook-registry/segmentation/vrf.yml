@@ -1,0 +1,21 @@
+---
+# CONFIG intent: VRF (Virtual Routing & Forwarding)   | category: segmentation (Tier 2)
+# required_fields: vrf_name, rd
+# optional: interfaces (list), description, state (present/absent)
+# NOTE: assigning an interface to a VRF CLEARS its existing IP - reapply the IP
+#       afterwards (run interface_ip.yml). RD format is ASN:nn or A.B.C.D:nn (e.g. 100:1).
+# e.g. -e '{"vrf_name":"CUSTOMER_A","rd":"100:1","interfaces":["GigabitEthernet0/2"]}'
+
+- name: Configure VRF
+  hosts: "{{ target_hosts | default('routers') }}"
+  gather_facts: false
+  connection: network_cli
+
+  tasks:
+    - name: "Ensure VRF {{ vrf_name }} (rd {{ rd }}) is {{ state | default('present') }}"
+      cisco.ios.ios_vrf:
+        name: "{{ vrf_name }}"
+        rd: "{{ rd }}"
+        description: "{{ description | default(omit) }}"
+        interfaces: "{{ interfaces | default(omit) }}"
+        state: "{{ state | default('present') }}"

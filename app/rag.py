@@ -141,3 +141,74 @@ class VectorStoreManager:
 
 
 vectorstore_manager = VectorStoreManager()
+
+
+# ========== LOCAL VECTOR STORE (Ollama nomic-embed-text) ==========
+# Separate FAISS index built with local embeddings; stored at data/rag_index_local.
+# If Ollama is not running (local_embeddings is None), all methods degrade gracefully.
+_LOCAL_RAG_INDEX_PATH = os.path.join(BASE_DIR, "data", "rag_index_local")
+
+
+class LocalVectorStoreManager:
+    """FAISS vector store that uses Ollama (nomic-embed-text) for embeddings."""
+
+    def __init__(self):
+        self.vectorstore = None
+
+    def _get_embeddings(self):
+        from .decision import local_embeddings as _le
+        if _le is None:
+            raise RuntimeError(
+                "Local embeddings (Ollama nomic-embed-text) are not available. "
+                "Make sure Ollama is running: `ollama serve`"
+            )
+        return _le
+
+    def add_documents(self, documents, ids=None):
+        if not documents:
+            logger.warning("local add_documents called with no documents")
+            return []
+        emb = self._get_embeddings()
+        total = len(documents)
+        if ids is None:
+            ids = [str(uuid.uuid4()) for _ in range(total)]
+        for start in range(0, total, EMBED_BATCH_SIZE):
+            batch = documents[start:start + EMBED_BATCH_SIZE]
+            batch_ids = ids[start:start + EMBED_BATCH_SIZE]
+            if not self.vectorstore:
+                self.vectorstore = FAISS.from_documents(batch, emb, ids=batch_ids)
+            else:
+                self.vectorstore.add_documents(batch, ids=batch_ids)
+            self.vectorstore.save_local(_LOCAL_RAG_INDEX_PATH)
+            logger.info("Local index: indexed %d/%d documents", min(start + EMBED_BATCH_SIZE, total), total)
+        return ids
+
+    def retrieve_docs(self, query, k=RAG_TOP_K):
+        if not self.vectorstore:
+            self._try_load()
+        if not self.vectorstore:
+            logger.warning("Local vector store not initialized; returning empty context")
+            return ""
+        try:
+            docs = self.vectorstore.similarity_search(query, k=k)
+            return "\n\n".join(d.page_content for d in docs)
+        except Exception as e:
+            logger.error("Local vector store retrieval error: %s", e)
+            return ""
+
+    def _try_load(self):
+        index_faiss = os.path.join(_LOCAL_RAG_INDEX_PATH, "index.faiss")
+        if not os.path.exists(index_faiss):
+            return
+        try:
+            emb = self._get_embeddings()
+            self.vectorstore = FAISS.load_local(
+                _LOCAL_RAG_INDEX_PATH, emb, allow_dangerous_deserialization=True
+            )
+            logger.info("Local vector store loaded (%d vectors)", self.vectorstore.index.ntotal)
+        except Exception as e:
+            logger.error("Failed to load local vector store: %s", e)
+            self.vectorstore = None
+
+
+local_vectorstore_manager = LocalVectorStoreManager()

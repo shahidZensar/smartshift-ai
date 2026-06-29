@@ -16,6 +16,7 @@ class QueryRequest(BaseModel):
     session_id: Optional[str] = Field(None, description="Session ID for conversation tracking")
     include_context: Optional[bool] = Field(True, description="Include retrieved context in response")
     form_values: Optional[dict] = Field(None, description="Structured CONFIG form submission: field -> value")
+    provider: Optional[str] = Field("azure", description="LLM provider: 'azure' (default) or 'local' (Ollama)")
 
     class Config:
         extra = "allow"  # Allow extra fields

@@ -33,6 +33,8 @@ def web_search(query):
 
 def web_search_chain(query, history: str = ""):
     search_results = web_search(query)
+    if not search_results:
+        return "Web search is not available (SERPAPI_API_KEY not configured). Please check the knowledge base or rephrase your question."
     prompt = with_history(WEBESEARCH_PROMPT.format(query=query, search_results=search_results), history)
     llm_response = llm.invoke(prompt)
     return llm_response.content if hasattr(llm_response, 'content') else llm_response

@@ -11,7 +11,7 @@ from typing import Any, Optional
 from langchain_core.output_parsers import PydanticOutputParser
 
 from .. import logger
-from ..decision import llm
+from ..decision import llm as _azure_llm
 from ..models import (
     ConfigTypeDetection, ConfigFieldExtraction, ConfigConnectionExtraction,
     ConfigPreflight, ConfigFormBuild,
@@ -40,8 +40,9 @@ def _llm_text(output: Any) -> str:
     return output.content if hasattr(output, "content") else str(output)
 
 
-def detect_type(query: str, history: str = "") -> ConfigTypeDetection:
+def detect_type(query: str, history: str = "", llm=None) -> ConfigTypeDetection:
     """LLM fallback: map a request to one config_type with confidence + candidates."""
+    _llm = llm if llm is not None else _azure_llm
     types = config_registry.types()
     type_examples = "\n".join(
         f"- {t}: {spec.example}" for t, spec in config_registry.all().items() if spec.example
@@ -54,7 +55,7 @@ def detect_type(query: str, history: str = "") -> ConfigTypeDetection:
         format_instructions=_detect_parser.get_format_instructions(),
     )
     try:
-        output = llm.invoke(prompt)
+        output = _llm.invoke(prompt)
         result = _detect_parser.parse(_llm_text(output))
         # Normalise the semantic-gate route to the closed set. Default to CONFIG_ACTION so
         # a garbled/missing route never blocks an otherwise-valid config request (the gate
@@ -81,8 +82,10 @@ def extract_fields(
     collected: dict[str, Any],
     history: str = "",
     spec: Optional[ConfigTypeSpec] = None,
+    llm=None,
 ) -> dict[str, Any]:
     """Extract stated field values for the given config_type. Returns {} on failure."""
+    _llm = llm if llm is not None else _azure_llm
     spec = spec or config_registry.get(config_type)
     if spec is None:
         return {}
@@ -103,7 +106,7 @@ def extract_fields(
         format_instructions=_extract_parser.get_format_instructions(),
     )
     try:
-        output = llm.invoke(prompt)
+        output = _llm.invoke(prompt)
         result = _extract_parser.parse(_llm_text(output))
         allowed = set(spec.required_fields) | set(spec.optional_fields)
         # Keep only known, non-empty fields.
@@ -116,15 +119,16 @@ def extract_fields(
         return {}
 
 
-def extract_connection(query: str, collected: dict[str, Any]) -> dict[str, Any]:
+def extract_connection(query: str, collected: dict[str, Any], llm=None) -> dict[str, Any]:
     """Extract standalone connection details (device_name/ansible_host/username/password)."""
+    _llm = llm if llm is not None else _azure_llm
     prompt = CONFIG_CONNECTION_EXTRACT_PROMPT.format(
         collected={k: ("***" if k == "password" else v) for k, v in (collected or {}).items()},
         query=query,
         format_instructions=_conn_parser.get_format_instructions(),
     )
     try:
-        output = llm.invoke(prompt)
+        output = _llm.invoke(prompt)
         result = _conn_parser.parse(_llm_text(output))
         return {k: v for k, v in result.model_dump().items() if v not in (None, "")}
     except Exception as exc:
@@ -132,11 +136,12 @@ def extract_connection(query: str, collected: dict[str, Any]) -> dict[str, Any]:
         return {}
 
 
-def build_form(spec: ConfigTypeSpec, query: str, history: str = "") -> Optional[ConfigFormBuild]:
+def build_form(spec: ConfigTypeSpec, query: str, history: str = "", llm=None) -> Optional[ConfigFormBuild]:
     """One combined LLM call: author the form copy AND extract any values already given.
 
     Constrained to the registry's field names. Returns None on failure so the caller
     falls back to static ENRICHMENT copy (and no pre-fill)."""
+    _llm = llm if llm is not None else _azure_llm
     lines = []
     for fname in spec.required_fields + spec.optional_fields:
         meta = spec.field_meta(fname)
@@ -153,7 +158,7 @@ def build_form(spec: ConfigTypeSpec, query: str, history: str = "") -> Optional[
         format_instructions=_form_parser.get_format_instructions(),
     )
     try:
-        output = llm.invoke(prompt)
+        output = _llm.invoke(prompt)
         result = _form_parser.parse(_llm_text(output))
         # Keep only extracted values for known, non-empty fields.
         allowed = set(spec.required_fields) | set(spec.optional_fields)
@@ -167,11 +172,12 @@ def build_form(spec: ConfigTypeSpec, query: str, history: str = "") -> Optional[
         return None
 
 
-def preflight_validate(spec: ConfigTypeSpec, collected: dict[str, Any], playbook_text: str) -> ConfigPreflight:
+def preflight_validate(spec: ConfigTypeSpec, collected: dict[str, Any], playbook_text: str, llm=None) -> ConfigPreflight:
     """Validate the collected mandatory properties against the actual playbook.
 
     Fail-open: any LLM/parse error returns ok=True so the gate is never blocked by an
     infrastructure problem (the deterministic missing-field check already ran)."""
+    _llm = llm if llm is not None else _azure_llm
     redacted = {
         k: ("***" if spec.field_meta(k).secret else v)
         for k, v in (collected or {}).items()
@@ -185,18 +191,19 @@ def preflight_validate(spec: ConfigTypeSpec, collected: dict[str, Any], playbook
         format_instructions=_preflight_parser.get_format_instructions(),
     )
     try:
-        output = llm.invoke(prompt)
+        output = _llm.invoke(prompt)
         return _preflight_parser.parse(_llm_text(output))
     except Exception as exc:
         logger.error("config preflight_validate failed (fail-open): %s", exc)
         return ConfigPreflight(ok=True)
 
 
-def phrase_question(message: str) -> str:
+def phrase_question(message: str, llm=None) -> str:
     """Rewrite a deterministic follow-up so it reads naturally. Falls back to the
     original message on any failure (grounding stays intact either way)."""
+    _llm = llm if llm is not None else _azure_llm
     try:
-        output = llm.invoke(CONFIG_QUESTION_PROMPT.format(message=message))
+        output = _llm.invoke(CONFIG_QUESTION_PROMPT.format(message=message))
         text = _llm_text(output).strip()
         return text or message
     except Exception as exc:
